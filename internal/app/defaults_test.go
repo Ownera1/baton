@@ -78,7 +78,7 @@ func TestLoadConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write(`{"agent":"claude","timeout":"30m","agents":{"claude":{"model":"opus","effort":"high","path":"/opt/claude"},"pi":{"path":"pi-dev"}}}`)
+	write(`{"agent":"claude","timeout":"30m","theme":"dark","agents":{"claude":{"model":"opus","effort":"high","path":"/opt/claude"},"pi":{"path":"pi-dev"}}}`)
 	c, _, raw, err := LoadConfig()
 	if err != nil || raw == nil || c.DefaultAgent() != "claude" || c.TurnTimeout() != 30*time.Minute || c.Agents["claude"] != (AgentConfig{"opus", "high", "/opt/claude"}) {
 		t.Fatalf("valid file: %+v %v", c, err)
@@ -90,6 +90,7 @@ func TestLoadConfig(t *testing.T) {
 	for _, body := range []string{
 		`{"agent":"gpt"}`,
 		`{"timeout":"soon"}`,
+		`{"theme":"blue"}`,
 		`{"agents":{"cursor":{}}}`,
 		`{"agents":{"codex":{"modle":"x"}}}`,
 		`{"agents":{"codex":{"path":"bin/codex"}}}`,

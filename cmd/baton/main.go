@@ -130,7 +130,7 @@ func run(args []string) error {
 		}
 		return svc.Worker(args[1])
 	case "tui":
-		theme := fs.String("theme", "auto", "auto|light|dark")
+		theme := fs.String("theme", "", "auto|light|dark (default: config, then auto)")
 		if _, err := parse(fs, args[1:]); err != nil {
 			return err
 		}
@@ -254,7 +254,7 @@ func run(args []string) error {
 			return nil
 		}
 	case "config":
-		theme := fs.String("theme", "auto", "auto|light|dark")
+		theme := fs.String("theme", "", "auto|light|dark (default: config, then auto)")
 		if _, err := parse(fs, args[1:]); err != nil {
 			return err
 		}
@@ -401,7 +401,7 @@ func printConfig(asJSON bool) error {
 	}
 	if asJSON {
 		return emit(map[string]any{"path": path, "exists": raw != nil, "agent": cfg.DefaultAgent(),
-			"timeout": cfg.TurnTimeout().String(), "agents": agents})
+			"timeout": cfg.TurnTimeout().String(), "theme": cmp.Or(cfg.Theme, "auto"), "agents": agents})
 	}
 	note := ""
 	if raw == nil {
@@ -412,7 +412,7 @@ func printConfig(asJSON bool) error {
 	if os.Getenv("BATON_AGENT") != "" {
 		source = "（BATON_AGENT）"
 	}
-	fmt.Printf("默认 Agent %s%s · 超时 %s\n", cfg.DefaultAgent(), source, cfg.TurnTimeout())
+	fmt.Printf("默认 Agent %s%s · 超时 %s · 主题 %s\n", cfg.DefaultAgent(), source, cfg.TurnTimeout(), cmp.Or(cfg.Theme, "auto"))
 	or := func(s string) string { return cmp.Or(s, "默认") }
 	for _, name := range app.Agents {
 		v := agents[name]

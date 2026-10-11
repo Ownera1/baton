@@ -24,9 +24,11 @@ type AgentConfig struct {
 
 // Config is the user-wide config.json. Every field is optional.
 type Config struct {
-	Agent   string                 `json:"agent,omitempty"`
-	Timeout string                 `json:"timeout,omitempty"`
-	Agents  map[string]AgentConfig `json:"agents,omitempty"`
+	Agent   string `json:"agent,omitempty"`
+	Timeout string `json:"timeout,omitempty"`
+	// Theme is the panel's light or dark palette; empty or auto follows the terminal.
+	Theme  string                 `json:"theme,omitempty"`
+	Agents map[string]AgentConfig `json:"agents,omitempty"`
 }
 
 // ConfigPath is BATON_CONFIG_DIR, XDG_CONFIG_HOME/baton or ~/.config/baton,
@@ -148,6 +150,9 @@ func (c Config) Validate() error {
 	}
 	if _, err := duration(c.Timeout, DefaultTimeout); err != nil {
 		return err
+	}
+	if !slices.Contains([]string{"", "auto", "light", "dark"}, c.Theme) {
+		return fmt.Errorf("theme %q is not auto, light or dark", c.Theme)
 	}
 	for name, a := range c.Agents {
 		if !slices.Contains(Agents, name) {
