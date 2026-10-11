@@ -136,7 +136,7 @@ func TestArgvModesAndResume(t *testing.T) {
 	}
 	o.Mode = "read"
 	o.SessionID = ""
-	if got := codexArgv(o); !reflect.DeepEqual(got, []string{"exec", "-s", "read-only", "-C", "/repo path", "--json", "-o", "/turn.last", "-m", "model", "-c", "model_reasoning_effort=\"high\"", "--", "task"}) {
+	if got := codexArgv(o); !reflect.DeepEqual(got, []string{"exec", "-s", "read-only", "-C", "/repo path", "-c", `approval_policy="never"`, "--json", "-o", "/turn.last", "-m", "model", "-c", "model_reasoning_effort=\"high\"", "--", "task"}) {
 		t.Fatal(got)
 	}
 }

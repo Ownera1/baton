@@ -18,7 +18,9 @@ func codexArgv(o Options) []string {
 	} else {
 		a = append(a, "-s", sandbox, "-C", o.Dir)
 	}
-	a = append(a, "--json", "-o", o.LastFile)
+	// never: the sandbox is a hard boundary. on-request lets the user's auto
+	// reviewer approve escalations outside it; Baton runs checks itself.
+	a = append(a, "-c", `approval_policy="never"`, "--json", "-o", o.LastFile)
 	if o.Model != "" {
 		a = append(a, "-m", o.Model)
 	}

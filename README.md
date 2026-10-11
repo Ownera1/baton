@@ -26,7 +26,7 @@ bin/baton run -agent claude -repo /path/to/repo -mode read -task @question.txt
 
 | Agent | read | write | 续接 | 输出 |
 |---|---|---|---|---|
-| codex | read-only | workspace-write | exec resume thread_id | JSONL |
+| codex | read-only，`approval_policy=never` | workspace-write，`approval_policy=never`（沙箱是硬边界，不能申请越权） | exec resume thread_id | JSONL |
 | claude | permission-mode plan | acceptEdits | --resume session_id | --output-format stream-json --verbose |
 | grok | permission-mode plan + --tools read_file,list_dir,grep | permission-mode auto + --sandbox workspace | -r sessionId | --output-format streaming-json |
 | agy | mode plan | accept-edits | --conversation conversation_id | --output-format stream-json |
