@@ -49,6 +49,11 @@ func (s *Service) Worker(id string) (retErr error) {
 	if req.Number != len(t.Turns)+1 {
 		return fmt.Errorf("invalid turn sequence")
 	}
+	slot, err := s.slot(req.Parallel, t.ID, cancelPath)
+	if err != nil {
+		return err
+	}
+	defer slot.Release()
 	start := time.Now().UTC()
 	t.Turns = append(t.Turns, Turn{Number: req.Number, Prompt: req.Prompt, StartedAt: &start, ExitCode: -1})
 	t.Status, t.WorkerPID, t.UpdatedAt = "running", os.Getpid(), start
@@ -288,4 +293,27 @@ func (s *Service) capture(t *Task, number int) error {
 	}
 	t.Diffstat, err = workspace.Git(t.Worktree, "diff", "--stat", t.BaseCommit, "HEAD")
 	return err
+}
+
+// slot holds one of n turn slots for the whole turn, so the task stays queued
+// until one frees; n <= 0 is no limit. A cancel while waiting returns no slot
+// and the turn then records the cancellation.
+func (s *Service) slot(n int, id, cancelPath string) (*guard.Lease, error) {
+	for n > 0 {
+		for i := range n {
+			gate, err := guard.NewSlotGate(s.Home, i)
+			if err != nil {
+				return nil, err
+			}
+			lease, err := gate.Acquire(context.Background(), id, 0)
+			if !errors.Is(err, guard.ErrGateBusy) {
+				return lease, err
+			}
+		}
+		if _, err := os.Stat(cancelPath); err == nil {
+			return nil, nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return nil, nil
 }

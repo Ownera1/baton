@@ -156,6 +156,9 @@ func (m model) listLines(w int) ([]string, []int, int) {
 			left := p.text(p.status(t.Status)).Render(m.glyph(t.Status)) + " " + p.text(p.ink).Bold(true).Render(fit(taskTitle(t), max(1, w-6-lipgloss.Width(tm))))
 			first := stripe + " " + rightRow(left, p.text(p.dim).Render(tm), max(1, w-3)) + " "
 			meta := fmt.Sprintf("%s · %s · 第 %d 轮 · %s", t.Who(), modeName(t.Mode), len(t.Turns), checkMeta(t))
+			if t.Group != "" {
+				meta = "#" + t.Group + " · " + meta
+			}
 			second := stripe + "   " + p.text(p.dim).Render(fit(meta, max(1, w-5))) + " "
 			style := p.text(p.ink).Background(bg)
 			lines = append(lines, paint(first, style, w), paint(second, style, w))

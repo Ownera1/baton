@@ -120,9 +120,11 @@ func register(srv *mcp.Server, svc *app.Service) {
 			out, err := svc.Cancel(id)
 			return nil, out, err
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "baton_list", OutputSchema: map[string]any{"type": "object"}, Description: "List persisted tasks, newest first."},
-		func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, *app.ListResult, error) {
-			out, err := svc.List()
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_list", OutputSchema: map[string]any{"type": "object"}, Description: "List persisted tasks, newest first; group limits it to one group of tasks."},
+		func(ctx context.Context, req *mcp.CallToolRequest, in struct {
+			Group string `json:"group,omitempty" jsonschema:"only tasks dispatched with this group"`
+		}) (*mcp.CallToolResult, *app.ListResult, error) {
+			out, err := svc.List(in.Group)
 			return nil, out, err
 		})
 }

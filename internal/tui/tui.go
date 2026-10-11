@@ -141,7 +141,7 @@ func running(tasks []*app.Task) bool {
 }
 func (m model) refresh() tea.Cmd {
 	return func() tea.Msg {
-		list, err := m.svc.List()
+		list, err := m.svc.List("")
 		return listMsg{list: list, err: err}
 	}
 }

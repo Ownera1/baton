@@ -24,6 +24,7 @@ type Task struct {
 	Title string `json:"title,omitempty"`
 	Agent string `json:"agent"`
 	Role  string `json:"role,omitempty"`
+	Group string `json:"group,omitempty"`
 	// Instructions is the role's body when dispatched, put before turn 1.
 	Instructions string `json:"instructions,omitempty"`
 	AgentPath    string `json:"agent_path,omitempty"` // configured executable; empty means PATH lookup
@@ -56,6 +57,7 @@ type RunRequest struct {
 	Repo   string   `json:"repo,omitempty" jsonschema:"git repository; defaults to the current directory"`
 	Task   string   `json:"task"`
 	Mode   string   `json:"mode,omitempty" jsonschema:"read or write; defaults to the role's mode, then write"`
+	Group  string   `json:"group,omitempty" jsonschema:"label for tasks working on one goal, to list them together; a base task's group is inherited"`
 	Base   string   `json:"base,omitempty" jsonschema:"a finished write task (id, unique prefix or suffix) to continue from: write branches from its latest commit and inherits its checks, read runs in its worktree; repo defaults to its repository"`
 	Model  string   `json:"model,omitempty"`
 	Effort string   `json:"effort,omitempty"`
@@ -95,6 +97,8 @@ type request struct {
 	Prompt  string        `json:"prompt"`
 	Number  int           `json:"number"`
 	Timeout time.Duration `json:"timeout"`
+	// Parallel is max_parallel when the turn was dispatched.
+	Parallel int `json:"parallel,omitempty"`
 }
 
 // Who names the role and its agent, or just the agent.

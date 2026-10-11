@@ -30,8 +30,10 @@ type Config struct {
 	Agent   string `json:"agent,omitempty"`
 	Timeout string `json:"timeout,omitempty"`
 	// Theme is the panel's light or dark palette; empty or auto follows the terminal.
-	Theme  string                 `json:"theme,omitempty"`
-	Agents map[string]AgentConfig `json:"agents,omitempty"`
+	Theme string `json:"theme,omitempty"`
+	// MaxParallel caps turns running at once across BATON_HOME; 0 is no limit.
+	MaxParallel int                    `json:"max_parallel,omitempty"`
+	Agents      map[string]AgentConfig `json:"agents,omitempty"`
 }
 
 // ConfigPath is BATON_CONFIG_DIR, XDG_CONFIG_HOME/baton or ~/.config/baton,
@@ -156,6 +158,9 @@ func (c Config) Validate() error {
 	}
 	if !slices.Contains([]string{"", "auto", "light", "dark"}, c.Theme) {
 		return fmt.Errorf("theme %q is not auto, light or dark", c.Theme)
+	}
+	if c.MaxParallel < 0 {
+		return fmt.Errorf("max_parallel must be a whole number, 0 for no limit")
 	}
 	for name, a := range c.Agents {
 		if !slices.Contains(Agents, name) {

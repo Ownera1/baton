@@ -132,8 +132,10 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	if role != nil {
 		t.Role, t.Instructions = role.Name, role.Prompt
 	}
+	t.Group = strings.TrimSpace(in.Group)
 	if base != nil {
 		t.BaseTask = base.ID
+		t.Group = cmp.Or(t.Group, base.Group)
 	}
 	if in.Mode == "write" {
 		t.Worktree = filepath.Join(dir, "wt")
@@ -143,7 +145,7 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 			t.Warnings = append(t.Warnings, "pi write 模式没有沙箱；worktree 仅隔离 Git 改动。")
 		}
 	}
-	return s.submit(dir, request{Task: t, Prompt: prompt, Number: 1, Timeout: timeout})
+	return s.submit(dir, request{Task: t, Prompt: prompt, Number: 1, Timeout: timeout, Parallel: cfg.MaxParallel})
 }
 
 func (s *Service) submit(dir string, req request) (*Submitted, error) {
@@ -328,7 +330,7 @@ func (s *Service) Reply(in ReplyRequest) (*Submitted, error) {
 			return nil, fmt.Errorf("cannot resume dirty worktree: %w", err)
 		}
 	}
-	return s.submit(dir, request{Task: *t, Prompt: prompt, Number: len(t.Turns) + 1, Timeout: timeout})
+	return s.submit(dir, request{Task: *t, Prompt: prompt, Number: len(t.Turns) + 1, Timeout: timeout, Parallel: cfg.MaxParallel})
 }
 
 func (s *Service) Cancel(id string) (*Task, error) {
@@ -352,7 +354,8 @@ func (s *Service) Cancel(id string) (*Task, error) {
 	return s.Status(id)
 }
 
-func (s *Service) List() (*ListResult, error) {
+// List returns every task, or only those in group, newest first.
+func (s *Service) List(group string) (*ListResult, error) {
 	r := &ListResult{Tasks: []*Task{}}
 	entries, err := os.ReadDir(filepath.Join(s.Home, "tasks"))
 	if errors.Is(err, os.ErrNotExist) {
@@ -369,7 +372,9 @@ func (s *Service) List() (*ListResult, error) {
 		if err != nil {
 			return nil, fmt.Errorf("task %s: %w", e.Name(), err)
 		}
-		r.Tasks = append(r.Tasks, t)
+		if group == "" || t.Group == group {
+			r.Tasks = append(r.Tasks, t)
+		}
 	}
 	sort.Slice(r.Tasks, func(i, j int) bool { return r.Tasks[i].CreatedAt.After(r.Tasks[j].CreatedAt) })
 	return r, nil

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,8 @@ printf 'raw stderr\n' >&2
 			t.Fatalf("baton %v: %v\n%s\n%s", args, err, out, stderr.String())
 		}
 		if dst != nil {
+			v := reflect.ValueOf(dst).Elem()
+			v.Set(reflect.Zero(v.Type())) // fields omitted from this output must not keep older values
 			if err := json.Unmarshal(out, dst); err != nil {
 				t.Fatalf("decode %q: %v", out, err)
 			}
@@ -284,6 +287,54 @@ printf 'raw stderr\n' >&2
 	if patch, err := os.ReadFile(task.PatchPath); err != nil || !bytes.Contains(patch, []byte("agent.pid")) {
 		t.Fatalf("canceled turn patch: %s %v", patch, err)
 	}
+	hold := task
+
+	// max_parallel 1: later tasks stay queued until the slot frees; a queued task can be canceled.
+	config := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	config(`{"max_parallel":1,"agents":{"codex":{"model":"cfg-model"}}}`)
+	cli(&submitted, "do", "HOLD", "-repo", repo, "-no-check", "-group", "slots", "-timeout", "20s")
+	holder := submitted.ID
+	for deadline := time.Now().Add(15 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		cli(&task, "status", holder)
+		if _, err := os.Stat(filepath.Join(task.Worktree, "agent.pid")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("holder did not start: %+v", task)
+		}
+	}
+	cli(&submitted, "do", "QUEUED-BEHIND", "-repo", repo, "-no-check", "-group", "slots", "-timeout", "20s")
+	queued := submitted.ID
+	cli(&submitted, "do", "DROPPED-IN-QUEUE", "-repo", repo, "-no-check", "-timeout", "20s")
+	dropped := submitted.ID
+	time.Sleep(500 * time.Millisecond)
+	if cli(&task, "status", queued); task.Status != "queued" {
+		t.Fatalf("second task did not wait for the slot: %+v", task)
+	}
+	cli(&task, "cancel", dropped)
+	if cli(&task, "wait", dropped, "-timeout", "10s"); task.Status != "canceled" {
+		t.Fatalf("cancel while queued: %+v", task)
+	}
+	cli(&task, "cancel", holder)
+	if cli(&task, "wait", queued, "-timeout", "10s"); task.Status != "succeeded" || task.Group != "slots" {
+		t.Fatalf("queued task after the slot freed: %+v", task)
+	}
+	if log, err := os.ReadFile(argvLog); err != nil || !bytes.Contains(log, []byte("QUEUED-BEHIND")) || bytes.Contains(log, []byte("DROPPED-IN-QUEUE")) {
+		t.Fatalf("queued agents: %v", err)
+	}
+	config(`{"agents":{"codex":{"model":"cfg-model"}}}`)
+	cli(&submitted, "do", "inherits group", "-base", queued, "-no-check", "-timeout", "20s")
+	cli(&task, "wait", submitted.ID, "-timeout", "20s")
+	var grouped app.ListResult
+	if cli(&grouped, "list", "-group", "slots"); len(grouped.Tasks) != 3 || grouped.Tasks[0].ID != submitted.ID || grouped.Tasks[0].Group != "slots" {
+		t.Fatalf("group: %+v", grouped)
+	}
+	task = hold
 	held := task // the canceled codex task, checked over MCP below
 	// Roles: global and repository files, instructions before turn 1 only, mode as a constraint.
 	roles := map[string]string{
@@ -363,6 +414,10 @@ printf 'raw stderr\n' >&2
 	var top map[string]any
 	if err := json.Unmarshal(b, &many); err != nil || len(many.Tasks) != 2 || many.Tasks[0].ID != held.ID || json.Unmarshal(b, &top) != nil || len(top) != 1 {
 		t.Fatalf("MCP wait ids: %s %v", b, err)
+	}
+	out, err = conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_list", Arguments: map[string]any{"group": "slots"}})
+	if b, _ = json.Marshal(out.StructuredContent); err != nil || out.IsError || json.Unmarshal(b, &grouped) != nil || len(grouped.Tasks) != 3 {
+		t.Fatalf("MCP list group: %s %v", b, err)
 	}
 	// Hidden agents are left out of baton_agents and refused over MCP only.
 	exposed := func() map[string]app.AgentInfo {
