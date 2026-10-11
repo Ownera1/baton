@@ -139,6 +139,12 @@ func TestArgvModesAndResume(t *testing.T) {
 	if got := codexArgv(o); !reflect.DeepEqual(got, []string{"exec", "-s", "read-only", "-C", "/repo path", "-c", `approval_policy="never"`, "--json", "-o", "/turn.last", "-m", "model", "-c", "model_reasoning_effort=\"high\"", "--", "task"}) {
 		t.Fatal(got)
 	}
+	if got, err := Argv("codex", Options{Path: "/bin/sh"}); err != nil || got[0] != "/bin/sh" {
+		t.Fatalf("configured path: %v %v", got, err)
+	}
+	if _, err := Argv("codex", Options{Path: "/nonexistent/codex"}); err == nil {
+		t.Fatal("missing configured path must fail")
+	}
 }
 
 func TestCodexTransientErrorIsWarning(t *testing.T) {

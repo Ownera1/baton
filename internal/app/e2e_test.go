@@ -38,6 +38,11 @@ func TestEndToEnd(t *testing.T) {
 		}
 	}
 	t.Setenv("BATON_HOME", home)
+	t.Setenv("BATON_AGENT", "")
+	t.Setenv("BATON_CONFIG_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"agents":{"codex":{"model":"cfg-model"}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("GIT_AUTHOR_NAME", "Baton Test")
 	t.Setenv("GIT_AUTHOR_EMAIL", "baton@example.invalid")
@@ -143,7 +148,7 @@ printf 'raw stderr\n' >&2
 		t.Fatalf("source changed: %+v %v", source, err)
 	}
 	log, err := os.ReadFile(argvLog)
-	if err != nil || !bytes.Contains(log, []byte("resume\n")) || !bytes.Contains(log, []byte("sandbox_mode=\"workspace-write\"")) {
+	if err != nil || !bytes.Contains(log, []byte("resume\n")) || !bytes.Contains(log, []byte("sandbox_mode=\"workspace-write\"")) || !bytes.Contains(log, []byte("-m\ncfg-model\n")) {
 		t.Fatalf("resume arguments: %q %v", log, err)
 	}
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "fail check", "-check", "false", "-timeout", "20s")
@@ -154,7 +159,7 @@ printf 'raw stderr\n' >&2
 	// do: default agent, positional task text with flags after it, short id.
 	cli(&submitted, "do", "no", "checks", "-repo", repo, "-timeout", "20s")
 	cli(&task, "wait", submitted.ID[len(submitted.ID)-8:], "-timeout", "20s")
-	if task.Status != "succeeded" || task.Verify.Status != "none" || task.Agent != "codex" || task.Turns[0].Prompt != "no checks" {
+	if task.Status != "succeeded" || task.Verify.Status != "none" || task.Agent != "codex" || task.Model != "cfg-model" || task.Turns[0].Prompt != "no checks" {
 		t.Fatalf("no checks: %+v", task)
 	}
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "dirty check", "-check", "touch check-created.txt", "-timeout", "20s")

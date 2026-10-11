@@ -23,6 +23,7 @@ type Task struct {
 	ID         string        `json:"id"`
 	Title      string        `json:"title,omitempty"`
 	Agent      string        `json:"agent"`
+	AgentPath  string        `json:"agent_path,omitempty"` // configured executable; empty means PATH lookup
 	Mode       string        `json:"mode"`
 	Repo       string        `json:"repo"`
 	Worktree   string        `json:"worktree"`
@@ -45,7 +46,7 @@ type Task struct {
 
 type RunRequest struct {
 	Title  string   `json:"title,omitempty" jsonschema:"Conversation title supplied by the dispatching agent; inferred from task when omitted"`
-	Agent  string   `json:"agent,omitempty" jsonschema:"codex (default), claude, grok, agy or pi"`
+	Agent  string   `json:"agent,omitempty" jsonschema:"codex, claude, grok, agy or pi; defaults to BATON_AGENT, the Baton config, then codex"`
 	Repo   string   `json:"repo,omitempty" jsonschema:"git repository; defaults to the current directory"`
 	Task   string   `json:"task"`
 	Mode   string   `json:"mode,omitempty"`

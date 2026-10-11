@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 
 type Options struct {
 	Mode, Dir, Prompt, Model, Effort, SessionID, LastFile string
+	Path                                                  string // executable; empty means name looked up in PATH
 }
 
 type Result struct {
@@ -38,7 +40,7 @@ func Argv(name string, o Options) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported agent %q", name)
 	}
-	path, err := exec.LookPath(name) // Direct exec deliberately ignores shell aliases.
+	path, err := exec.LookPath(cmp.Or(o.Path, name)) // Direct exec deliberately ignores shell aliases.
 	if err != nil {
 		return nil, err
 	}
