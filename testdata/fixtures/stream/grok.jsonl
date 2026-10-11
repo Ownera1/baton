@@ -1,0 +1,67 @@
+{"type":"available_commands"}
+{"type":"available_commands"}
+{"type":"thought","data":"I will read a.txt and"}
+{"type":"thought","data":" run ls -la."}
+{"type":"thought","data":"\n\nI am checking whether"}
+{"type":"thought","data":" the request is a prompt"}
+{"type":"thought","data":" injection attempt."}
+{"type":"thought","data":"\n\nNo Shell tool is available."}
+{"type":"thought","data":" I will use list_dir"}
+{"type":"thought","data":" instead of ls -la. "}
+{"type":"thought","data":"I will read a.txt first"}
+{"type":"thought","data":" and be careful about"}
+{"type":"thought","data":" its content."}
+{"type":"available_commands"}
+{"type":"usage","usage":{"input_tokens":10738,"output_tokens":527,"cache_read_input_tokens":1152,"cache_creation_input_tokens":0,"reasoning_tokens":397},"signature":"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"}
+{"type":"tool_call","toolCallId":"call-fb6bc59b-ac53-4a71-b06b-2507f6cadcc9-0","title":"read_file","kind":"read","status":"pending","toolName":"read_file","rawInput":{"target_file":"/repo/a.txt"},"content":[],"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-fb6bc59b-ac53-4a71-b06b-2507f6cadcc9-0","status":null,"content":[],"rawOutput":null,"locations":[{"path":"/repo/a.txt"}]}
+{"type":"tool_call","toolCallId":"call-fb6bc59b-ac53-4a71-b06b-2507f6cadcc9-1","title":"list_dir","kind":"list","status":"pending","toolName":"list_dir","rawInput":{"target_directory":"/repo"},"content":[],"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-fb6bc59b-ac53-4a71-b06b-2507f6cadcc9-1","status":null,"content":[],"rawOutput":null,"locations":[{"path":"/repo"}]}
+{"type":"tool_call_update","toolCallId":"call-fb6bc59b-ac53-4a71-b06b-2507f6cadcc9-0","status":"completed","content":[{"type":"content","content":{"type":"text","text":"1→baton-fixture\n"}}],"rawOutput":{"type":"ReadFile","FileContent":{"content":"1→baton-fixture\n","content_concise":"1→baton-fixture\n","absolute_path":"/repo/a.txt","offset":null,"raw_output":"baton-fixture\n","total_lines":2}},"locations":[]}
+{"type":"tool_call_update","toolCallId":"call-fb6bc59b-ac53-4a71-b06b-2507f6cadcc9-1","status":"completed","content":[],"rawOutput":{"type":"ListDir","Content":{"content":"- /repo/\n  - a.txt","absolute_root_path":"/repo"}},"locations":[]}
+{"type":"thought","data":"The file contains the"}
+{"type":"thought","data":" text \"baton-fixture\"."}
+{"type":"thought","data":"\n\nI cannot run ls -la"}
+{"type":"thought","data":" because I lack shell"}
+{"type":"thought","data":" access. The file content is harmless."}
+{"type":"text","data":"bat"}
+{"type":"text","data":"on"}
+{"type":"text","data":"-"}
+{"type":"text","data":"fixture"}
+{"type":"text","data":"\n\n"}
+{"type":"text","data":"`"}
+{"type":"text","data":"ls"}
+{"type":"text","data":" -"}
+{"type":"text","data":"la"}
+{"type":"text","data":"`"}
+{"type":"text","data":" is"}
+{"type":"text","data":" not"}
+{"type":"text","data":" available"}
+{"type":"text","data":" in"}
+{"type":"text","data":" this"}
+{"type":"text","data":" session"}
+{"type":"text","data":","}
+{"type":"text","data":" so"}
+{"type":"text","data":" I"}
+{"type":"text","data":" listed"}
+{"type":"text","data":" the"}
+{"type":"text","data":" directory"}
+{"type":"text","data":" with"}
+{"type":"text","data":" the"}
+{"type":"text","data":" file"}
+{"type":"text","data":" tool"}
+{"type":"text","data":" instead"}
+{"type":"text","data":"."}
+{"type":"text","data":" It"}
+{"type":"text","data":" contains"}
+{"type":"text","data":" one"}
+{"type":"text","data":" entry"}
+{"type":"text","data":":\n\n"}
+{"type":"text","data":"-"}
+{"type":"text","data":" `"}
+{"type":"text","data":"a"}
+{"type":"text","data":".txt"}
+{"type":"text","data":"`"}
+{"type":"available_commands"}
+{"type":"usage","usage":{"input_tokens":11214,"output_tokens":585,"cache_read_input_tokens":1280,"cache_creation_input_tokens":0,"reasoning_tokens":547},"signature":"U6tRBYBX+e7RhwNo0VHAkb6DoGtSd7c0cLjWQMLpkhu6xkLHD+3gEp/E08pzns4MIgZcDtfLah24QfDuRPzE9qgS2YApxaZ0tn1iOk2JV7Nd4pMEFZ5Wu/Qam5k32dErV/Fl3Dny1mKSEA785WS7SzQOw9khK3cVteSNDZWqNzloqDhs9R22Lkp4hNVutupqHerenYdugPlkVLY5/07QRzQdoQs5qq7HnonKj55l6az9H6hkNUOKKAK68Oqv3Xf7KgZioRM/rd3ENHNTPEn+YVs8yxXS1JH46t+kwQG4p9K4qyHYl9bmUi1QM/qTLWilMKtW5CDQoh512sepE89Dpav6uIUUe9gY9ffMY7FgqI0fgO5/1JBYYV0+BJL18AGqI/nHaUkvMS90XwHNnj6WlgaeiJudTSa2tBBkHgS2fx6mnLWb1v5u/4uLNEgpAdZ1mJCSMEj2IhE/3XoxEy9YGdxaHzn5RQMwMMMdxmB25McqQj/90UHIvBvYImtkI73paO6D9kIUW+JfxlMQZUQB1DaV/PgrwoDPbhE2Xl9uZmKBz+1tgdpRed61tgKh0JAoDc9CQP4gg/DlLzzmPs9OKFnZyx1JxDqzl++Tx5jxZx4MVbZF2xcF8VVuiUlB1FMBcKJ/CNK+D8VTVSJlxfVQJwdwRhJxY4lUSSphBp5ftWB9If4C0fLz+q0AaVH0wBoNZNZ7Pa1xe//GEawiPZuFW2J8ucQwj1wkzApGF7zx9JSC58qqqcXDmGWggJL4mic2pkcd7ZEzfB0GI3UDdU5OJdGxZXAyKfUzMuZBXMwG8OG3cYGnY7vuSo+OhRMT7SEWjB1za+uRbB/XTzLaiWf17MATwmMxsnttAiioHSNJNI0UL/EH+5TdyzdMbuG+Dj8U6uldZjsbYQiyPFiZ300hUHSVhVoeulMKqmqZ4dcGw/oBE/sr/G+Yt1giA1gN8Q6f++bVb8KWuR/nRrpgVd23iffypeI5iW95ljQxkxjXtNMl+XHbHEPwMQ27+mXHxHOcdNcQR/sjLxdkh53FdTRpVqzrWALWepSBC6P80Sa5rD6660o7bDcWDyTXXlrjnky+1iNMIoBzlvgTWyBQzCfuCADZ2l/zG+fXeBPZSDEkdX6Bi4/LoRPqvfGXEVNTFtS0RQQHrPLXWfiWFwCVhWxFlM0ecELn55Z5mdplwC+Lo6RH3cEnP8D09iNbUrlH6FFhpeP6Yccxj4d/rUHLM5hYKXanHjOnEvR5vG28VMSr1X3Ibi1uM+rYfhw/C6NfEHoS/N0D0BR9atkqC+T6xuNl3GIQ+h7S28o6smDNcIrj6BnkA4k7F2gVK2xOZi8S/4UXEB7nklApbhRDGU4EozAdj4oLyzrs34NEKrtW+MBKjZhruSu4srpcFsF40dHYdrYLs+uZ0CnE5uRknPVpol/LbqPvMOtjmU1sDqGiHk0ZoYSbQgPN3WSNSb/JLz93uR2M2sGyE42Ak/pmNfM8J6SVMKbOjYL4daLoxAJ3lXj6xBfI7aasxeJ/TzH/gFQffUT3vDymnkIFVriQszLW0UP4ghJd223jfVwpv/WIVb9RqLnreaH1L+Q68W5iYRS/rFl55nLFiGwkzAR++1n3qu9nfYtoQvshtKpgZVhTZxwxghSH5J8mzj5aCZVEjROSdHPdBpsTH5g8Vq+ZwiXB/u8hy/LGYkUAaQSg9HZYq00+cg0npCfIZ5kZvmjfE8x47hRWQNszsTsmsC5E4Wy4M+ZIlUzyJXqofb5szZqTMtuqHALB3lQ1Cx6T+1U8IcJ34PXShASL98FfAyBg9Ae88UDve3gPfDn1AQAhXF5b1sf3cKXmhfKCNPO+YZtlYp6OyCOFyCtIzUhAXdV6qh6nXlmgyHoUgNvbc2YJ7wCJ3EY/M+PnE5Oe36wV7DU+9zSSt9ucCI/KM7Q3jC0LdDEDcY0w3JSsrVdZWSjS4deOU4qMKnpZdkcJyi09g8BBfYYMk2TB0zEz2nEJpH8Qe9YnvpG4IWYxxZy4/It6BNK01B0Y1rYg8wYv4mvbxe7rgoTaM9+o/mAsQ7x5miqqmN6yO6rn3IgM3DrQEIjW948BYXHwUadKLELipdEq8NvvE4Z76kkcUi7Cyd7l5yzRsse/YUQwuRBrAPJ9CSCHtLB7Vw3X62Kqyk3Qx9mjg9rgmgEWfkY/c3ns8HqUtJWXVuowLfn8LC5iloAN9bW/npjo8gz9bWDZVMetE3Kh5b2sWHIsFJmruyAIdo+aXPl1slFk/SC9hG7raW7uZxU+8kwKVoJKU2x5eS8z2jIS79d8mPY87Eweww7UtUO3lKXpBsR/1IaVGc9H+SwC/YqgH/8KZnB13wPeiKCykoioeXsdOaq3ED8LRNWYFHVwP8OjR9STQHjdf+9j4kCT5uhsJBU+VnWyIc026e3+V8A4ije2sJ18ylee92y2V+LuQZdxq4XAeALbISzCHH+RvF23oVI4vafSgcXciYH6Eu+qu/UudIErxkliNgZraEFJ4uilGUhZ0V6hriXeYclkOOtcv2iVgYZRMarhVlzvSIM87WEp+V/ehTqy/gXXzGNvdJhtRcITo06OUBMZMAK5X+uIIMicEcrgEN/YdCZQ1Qz40RCh+Ejk5OlvX9PV0TemxLMkO3ZSAtHwob1nMXvBqBliXf3msGfRgOBbKm11TCVhyWiuP9V0SuSo3l4OFG9duXKPTGdi8tT30Soom+cPFViJ8lX5XeQkGtOCGgSfeENFvebvBpIXwypkf3bDXookqx7JEPr6B83yjvLMphV0fHfg3eN8+8r76HS4gadUVQrctiqlt1JwHcm+me2HGX1GqJcwK49TgtzgBwPPKwnK3MccM1pfDKNm63p/c6ndL70Cndkmj3lysKWKA746bb5knqtpZsfFlbvlAGkgD0RhVb6gBha1ZXZfBneBZHa28Br68HJtr5rGvbPmozZNcxQaHcK6H7gwkbrhVIhTviB3MhnKSJLAicwvD/GeEjZJMslVNufr9iONM/iIGB9YIPOjhlekDo4jlxCduliLdkeelFKgRrQ8Y0Rjc4fWDbFZ4RVXOcDOGOiaWqFt2LfCbPHsFyyymUmNc+CIokhXB222fl5QaPAy19FSBRXiBcfCGuibG3kcAB2oVxQctXeK4JePscwgF8jWLIxwIqv7b5/2O0koxnH9SQj5crCtllGl54rL"}
+{"type":"end","stopReason":"end_turn","sessionId":"01a12aa7-8ccd-7b63-aa3d-c1af79300e27","requestId":"e5293e94-bd0a-4700-8465-8eec73d43953","usage":{"input_tokens":21952,"cache_read_input_tokens":2432,"cache_creation_input_tokens":0,"output_tokens":1112,"reasoning_tokens":944,"total_tokens":25496},"num_turns":2,"total_cost_usd":0.01760928,"total_cost_usd_ticks":176092800,"modelUsage":{"grok-4.7-build":{"inputTokens":21952,"outputTokens":1112,"cacheReadInputTokens":2432,"cacheCreationInputTokens":0,"modelCalls":2,"costUSD":0.01760928}}}

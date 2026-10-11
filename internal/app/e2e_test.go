@@ -45,7 +45,7 @@ func TestEndToEnd(t *testing.T) {
 	t.Setenv("GIT_COMMITTER_EMAIL", "baton@example.invalid")
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("FIXTURE_PATH", filepath.Join(root, "testdata", "fixtures", "codex.exec.jsonl"))
+	t.Setenv("FIXTURE_PATH", filepath.Join(root, "testdata", "fixtures", "stream", "codex.jsonl"))
 	argvLog := filepath.Join(dir, "argv.log")
 	t.Setenv("ARGV_LOG", argvLog)
 	// Only this fake codex is executed; no provider or real agent is used.
@@ -77,6 +77,9 @@ printf 'raw stderr\n' >&2
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
+		if dst != nil {
+			args = append(args, "-json") // output is human-readable by default; flags may follow positionals
+		}
 		cmd := exec.CommandContext(ctx, bin, args...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -91,18 +94,18 @@ printf 'raw stderr\n' >&2
 		}
 	}
 	var submitted app.Submitted
-	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "make a file", "-check", "test -f result.txt", "-timeout", "20s")
+	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "make a file", "-title", "创建结果文件", "-check", "test -f result.txt", "-timeout", "20s")
 	if submitted.ID == "" || submitted.Status != "queued" {
 		t.Fatal(submitted)
 	}
 	var task app.Task
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
-	if task.Status != "succeeded" || task.Verify.Status != "pass" || task.Verify.Checks[0].ExitCode != 0 {
+	if len(task.Turns) != 1 || task.Title != "创建结果文件" || task.Turns[0].Verify == nil || task.Turns[0].Verify.Status != "pass" || task.Status != "succeeded" || task.Verify.Status != "pass" || task.Verify.Checks[0].ExitCode != 0 {
 		t.Fatalf("task: %+v", task)
 	}
 	var result app.Result
 	cli(&result, "result", submitted.ID, "-json")
-	if result.FinalText != "OK" || result.SessionID != "01a12a19-a475-7021-822e-76071a979957" || result.Branch != "baton/"+submitted.ID || result.BaseCommit != base || result.Diffstat == "" {
+	if result.FinalText != "baton-fixture" || result.SessionID != "01a12aa4-3781-7181-a0c4-33d76e940f0a" || result.Branch != "baton/"+submitted.ID || result.BaseCommit != base || result.Diffstat == "" {
 		t.Fatalf("result: %+v", result)
 	}
 	patch, err := os.ReadFile(result.PatchPath)
@@ -127,7 +130,7 @@ printf 'raw stderr\n' >&2
 	}
 	cli(&submitted, "reply", submitted.ID, "-msg", "@"+promptPath, "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
-	if task.Status != "succeeded" || len(task.Turns) != 2 || task.Worktree != firstWT || task.Branch != firstBranch || task.SessionID != session || task.Verify.Round != 2 {
+	if len(task.Turns) != 2 || task.Title != "创建结果文件" || task.Turns[0].Verify == nil || task.Turns[0].Verify.Round != 1 || task.Turns[1].Verify == nil || task.Turns[1].Verify.Round != 2 || task.Status != "succeeded" || task.Worktree != firstWT || task.Branch != firstBranch || task.SessionID != session || task.Verify.Round != 2 {
 		t.Fatalf("reply task: %+v", task)
 	}
 	if commits, err := workspace.Git(firstWT, "rev-list", "--count", base+"..HEAD"); err != nil || commits != "2" {
@@ -148,9 +151,10 @@ printf 'raw stderr\n' >&2
 	if task.Status != "failed" || task.Verify.Status != "fail" || task.Verify.Checks[0].ExitCode != 1 {
 		t.Fatalf("failed check: %+v", task)
 	}
-	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "no checks", "-timeout", "20s")
-	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
-	if task.Status != "succeeded" || task.Verify.Status != "none" {
+	// do: default agent, positional task text with flags after it, short id.
+	cli(&submitted, "do", "no", "checks", "-repo", repo, "-timeout", "20s")
+	cli(&task, "wait", submitted.ID[len(submitted.ID)-8:], "-timeout", "20s")
+	if task.Status != "succeeded" || task.Verify.Status != "none" || task.Agent != "codex" || task.Turns[0].Prompt != "no checks" {
 		t.Fatalf("no checks: %+v", task)
 	}
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "dirty check", "-check", "touch check-created.txt", "-timeout", "20s")
@@ -185,7 +189,7 @@ printf 'raw stderr\n' >&2
 	}
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-mode", "read", "-task", "read repo", "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
-	if task.Status != "succeeded" || task.Worktree != "" || task.Branch != "" || task.Verify.Status != "none" {
+	if task.Title != "read repo" || task.Status != "succeeded" || task.Worktree != "" || task.Branch != "" || task.Verify.Status != "none" {
 		t.Fatalf("read task: %+v", task)
 	}
 	if source, err := workspace.Inspect(repo); err != nil || source.Dirty {
@@ -240,7 +244,7 @@ printf 'raw stderr\n' >&2
 	if err := json.Unmarshal(b, &mcpResult); err != nil || mcpResult.ID != task.ID || mcpResult.Status != "canceled" {
 		t.Fatalf("MCP JSON: %s %v", b, err)
 	}
-	out, err = conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_run", Arguments: map[string]any{"agent": "codex", "repo": repo, "task": "DELAY", "timeout": "20s", "checks": []string{"test -f result.txt"}}})
+	out, err = conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_run", Arguments: map[string]any{"agent": "codex", "repo": repo, "task": "DELAY", "title": "MCP 对话标题", "timeout": "20s", "checks": []string{"test -f result.txt"}}})
 	if err != nil || out.IsError {
 		t.Fatalf("MCP run: %+v %v", out, err)
 	}
@@ -255,7 +259,7 @@ printf 'raw stderr\n' >&2
 		t.Fatal(err)
 	}
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
-	if task.Status != "succeeded" || task.Verify.Status != "pass" {
+	if task.Title != "MCP 对话标题" || task.Status != "succeeded" || task.Verify.Status != "pass" {
 		t.Fatalf("worker stopped after MCP disconnected: %+v", task)
 	}
 }

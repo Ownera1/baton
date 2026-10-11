@@ -1,0 +1,669 @@
+package tui
+
+import (
+	"baton/internal/agent"
+	"baton/internal/app"
+	"baton/internal/verify"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/termenv"
+)
+
+func fixtureTask(t *testing.T) (*app.Service, *app.Task, string) {
+	t.Helper()
+	t.Setenv("BATON_HOME", t.TempDir())
+	svc, err := app.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now().Add(-5 * time.Second)
+	task := &app.Task{ID: "20261011-110000-0123456789abcdef", Agent: "codex", Mode: "read", Status: "running",
+		Repo: "/repo/baton", Branch: "baton/fixture", Model: "fixture-model", Effort: "high", SessionID: "fixture-session",
+		WorkerPID: os.Getpid(), CreatedAt: start, Checks: []string{"go test ./..."},
+		Turns:  []app.Turn{{Number: 1, Prompt: "Read a.txt", StartedAt: &start, ExitCode: -1}},
+		Verify: verify.Result{Status: "unavailable"}}
+	dir := filepath.Join(svc.Home, "tasks", task.ID)
+	writeTask(t, dir, task)
+	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", "stream", "codex.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "turn-1.stdout"), b, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return svc, task, dir
+}
+
+func writeTask(t *testing.T, dir string, task *app.Task) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	request := struct {
+		Task   *app.Task `json:"task"`
+		Prompt string    `json:"prompt"`
+		Number int       `json:"number"`
+	}{task, task.Turns[len(task.Turns)-1].Prompt, len(task.Turns)}
+	for name, value := range map[string]any{"request.json": request, "task.json": task} {
+		b, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), b, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func update(m model, msg tea.Msg) (model, tea.Cmd) {
+	next, cmd := m.Update(msg)
+	return next.(model), cmd
+}
+
+func refresh(m model) model {
+	m, cmd := update(m, m.refresh()())
+	if cmd != nil {
+		m, _ = update(m, cmd())
+	}
+	return m
+}
+
+func key(s string) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)} }
+
+func TestViewAndReadOnlyRefresh(t *testing.T) {
+	svc, _, dir := fixtureTask(t)
+	before := snapshot(t, dir)
+	m := refresh(newModel(svc))
+	for _, size := range []tea.WindowSizeMsg{{Width: 140, Height: 32}, {Width: 80, Height: 38}} {
+		m, _ = update(m, size)
+		view := m.View()
+		for _, text := range []string{"codex", "运行中", "cat a.txt", "fixture-model", "Read a.txt"} {
+			if !strings.Contains(view, text) {
+				t.Fatalf("%dx%d missing %q:\n%s", size.Width, size.Height, text, view)
+			}
+		}
+		assertSize(t, view, size.Width, size.Height)
+	}
+	m, _ = update(m, tea.WindowSizeMsg{Width: 80, Height: 24})
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if !m.detail {
+		t.Fatal("tab did not focus details")
+	}
+	m, _ = update(m, key("j"))
+	if m.viewport.YOffset == 0 {
+		t.Fatal("details did not scroll")
+	}
+	if after := snapshot(t, dir); !reflect.DeepEqual(before, after) {
+		t.Fatal("view/refresh wrote task files")
+	}
+	for _, size := range []tea.WindowSizeMsg{{Width: 40, Height: 18}, {Width: 10, Height: 5}, {Width: 1, Height: 1}} {
+		m, _ = update(m, size)
+		assertSize(t, m.View(), size.Width, size.Height)
+	}
+	for _, msg := range []tea.KeyMsg{key("q"), {Type: tea.KeyCtrlC}} {
+		_, cmd := update(m, msg)
+		if cmd == nil {
+			t.Fatal("missing quit command")
+		}
+		if _, ok := cmd().(tea.QuitMsg); !ok {
+			t.Fatal("did not quit")
+		}
+	}
+}
+
+func TestSelectionRefreshAndCancel(t *testing.T) {
+	svc, task, dir := fixtureTask(t)
+	m := refresh(newModel(svc))
+	second := *task
+	second.ID = "20261011-110001-fedcba9876543210"
+	second.CreatedAt = task.CreatedAt.Add(-time.Minute)
+	secondDir := filepath.Join(svc.Home, "tasks", second.ID)
+	writeTask(t, secondDir, &second)
+	m = refresh(m)
+	m, cmd := update(m, key("j"))
+	if m.task().ID != second.ID || cmd == nil || len(m.logs[logKey{second.ID, 1}].events) != 0 {
+		t.Fatal("selection did not change and clear old events")
+	}
+	m, _ = update(m, cmd()) // missing stdout must become a visible error
+	if !strings.Contains(m.View(), "读取 stdout 失败") {
+		t.Fatal(m.View())
+	}
+	m, cmd = update(m, key("k"))
+	m, _ = update(m, cmd())
+	if m.task().ID != task.ID {
+		t.Fatal("k did not select previous task")
+	}
+	m, _ = update(m, eventsMsg{id: second.ID, logs: map[logKey]logSnapshot{{second.ID, 1}: {events: []agent.Event{{Kind: "message", Text: "wrong selection", Category: "message"}}}}})
+	if strings.Contains(m.View(), "wrong selection") {
+		t.Fatal("stale stdout replaced selected events")
+	}
+	before := snapshot(t, dir)
+	m, cmd = update(m, key("c"))
+	if cmd != nil || !strings.Contains(m.View(), "y 确认") || !reflect.DeepEqual(before, snapshot(t, dir)) {
+		t.Fatal("c must only ask for confirmation")
+	}
+	m, cmd = update(m, key("n"))
+	if cmd != nil || m.cancelID != "" || !reflect.DeepEqual(before, snapshot(t, dir)) {
+		t.Fatal("dismissal must not cancel")
+	}
+	m, _ = update(m, key("c"))
+	// A new task/reordering while the confirmation is open must keep its ID.
+	second.CreatedAt = task.CreatedAt.Add(time.Minute)
+	writeTask(t, secondDir, &second)
+	m = refresh(m)
+	if m.task().ID != task.ID || m.selected != 1 {
+		t.Fatal("refresh lost selection")
+	}
+	m, cmd = update(m, key("y"))
+	if cmd == nil {
+		t.Fatal("missing cancel command")
+	}
+	m, _ = update(m, cmd())
+	if _, err := os.Stat(filepath.Join(dir, "cancel-1")); err != nil {
+		t.Fatal("confirmed cancel did not call svc.Cancel:", err)
+	}
+	if _, err := os.Stat(filepath.Join(secondDir, "cancel-1")); !os.IsNotExist(err) {
+		t.Fatal("canceled wrong task:", err)
+	}
+	if !strings.Contains(m.View(), "已请求取消") {
+		t.Fatal(m.View())
+	}
+}
+
+func TestRefreshFileErrorsAndRecovery(t *testing.T) {
+	for _, file := range []string{"request.json", "task.json"} {
+		t.Run(file, func(t *testing.T) {
+			svc, task, dir := fixtureTask(t)
+			m := refresh(newModel(svc))
+			if err := os.WriteFile(filepath.Join(dir, file), []byte("{bad json"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			m = refresh(m)
+			if !strings.Contains(m.View(), "Error:") || !strings.Contains(m.View(), "codex") {
+				t.Fatal("bad JSON must show an error and retain the previous list:", m.View())
+			}
+			initial := refresh(newModel(svc))
+			if !strings.Contains(initial.View(), "Error:") {
+				t.Fatal("initial bad JSON must show an error:", initial.View())
+			}
+			writeTask(t, dir, task)
+			m = refresh(m)
+			if m.err != nil {
+				t.Fatal("did not recover:", m.err)
+			}
+			if err := os.Remove(filepath.Join(dir, "request.json")); err != nil {
+				t.Fatal(err)
+			}
+			m = refresh(m)
+			if !strings.Contains(m.View(), "Error:") {
+				t.Fatal("missing file must show an error:", m.View())
+			}
+		})
+	}
+	m := refresh(newModel(&app.Service{Home: t.TempDir()}))
+	if m.err != nil || !strings.Contains(m.View(), "暂无对话") {
+		t.Fatal("empty home:", m.View())
+	}
+}
+
+func TestDetailsAndElapsed(t *testing.T) {
+	svc, task, _ := fixtureTask(t)
+	cost := 0.012345
+	end := task.Turns[0].StartedAt.Add(7 * time.Second)
+	task.Turns[0].EndedAt, task.Turns[0].CostUSD = &end, &cost
+	task.Status = "failed"
+	task.Turns[0].FinalText, task.Turns[0].Error = "final reply", "turn error"
+	task.Diffstat, task.Warnings = "a.txt | 1 +", []string{"fixture warning"}
+	task.Verify = verify.Result{Status: "fail", Checks: []verify.Outcome{{Command: "go test ./...", Status: "fail", ExitCode: 2}}}
+	m := newModel(svc)
+	m.tasks = []*app.Task{task}
+	m.syncViewport()
+	for _, text := range []string{"final reply", "turn error", "✗ go test", "fixture warning", "$0.012345"} {
+		if !strings.Contains(ansi.Strip(m.details()), text) {
+			t.Fatalf("missing %q: %s", text, m.details())
+		}
+	}
+	m.tab = 3
+	if !strings.Contains(m.details(), "exit 2") {
+		t.Fatal(m.details())
+	}
+	if got := elapsed(task, end.Add(time.Hour)); got != "7s" {
+		t.Fatal("completed elapsed:", got)
+	}
+	task.Turns[0].EndedAt = nil
+	if got := elapsed(task, task.Turns[0].StartedAt.Add(12*time.Second)); got != "12s" {
+		t.Fatal("running elapsed:", got)
+	}
+	m, cmd := update(m, tickMsg(end))
+	if !m.now.Equal(end) || cmd == nil {
+		t.Fatal("tick did not update time and schedule refresh")
+	}
+}
+
+func snapshot(t *testing.T, dir string) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{}
+	for _, e := range entries {
+		b, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files[e.Name()] = string(b)
+	}
+	return files
+}
+
+func assertSize(t *testing.T, view string, width, height int) {
+	t.Helper()
+	if lipgloss.Width(view) > width || lipgloss.Height(view) > height {
+		t.Fatalf("view exceeds %dx%d: %dx%d\n%s", width, height, lipgloss.Width(view), lipgloss.Height(view), view)
+	}
+}
+
+func TestViewThemes(t *testing.T) {
+	profile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(profile) })
+	for _, theme := range []string{"dark", "light"} {
+		t.Run(theme, func(t *testing.T) {
+			svc, task, _ := fixtureTask(t)
+			task.Title, task.Status, task.Mode = "修复用户分页", "failed", "write"
+			end := task.Turns[0].StartedAt.Add(time.Minute)
+			task.Turns[0].EndedAt = &end
+			task.Turns[0].FinalText = "## 已处理\n\n修复了 **分页**。"
+			task.Checks = []string{"go test ./...", "go vet ./..."}
+			task.Verify = verify.Result{Status: "fail", Checks: []verify.Outcome{{Command: task.Checks[0], Status: "fail", ExitCode: 1, OutputTail: "cursor_test.go:42: error: invalid cursor"}}}
+			running, done := *task, *task
+			running.ID, running.Title, running.Status = "running", "实现导出", "running"
+			done.ID, done.Title, done.Status = "done", "梳理内存采样", "succeeded"
+			m := newModel(svc, theme)
+			m.width, m.height = 160, 32
+			m.tasks = []*app.Task{task, &running, &done}
+			m.patches[task.ID] = fileSnapshot{text: "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-old\n+new\n"}
+			m.syncViewport()
+			view := m.View()
+			plain := ansi.Strip(view)
+			for _, want := range []string{"Baton", m.now.Format("15:04:05"), "● 1 运行", "✗ 1 失败", "✓ 1 完成", "需要关注  1", "进行中  1", "已完成  1", "修复用户分页", "失败", "✗ go test", "◌ go vet", "改动 +1 −1 · 1 个文件", "1 对话", "2 事件", "3 改动", "4 检查", "↑↓ 选择", "tab 切焦点", "1-4 标签", "[ ] 比例", "z 专注", "e 展开", "c 取消", "q 退出", "列表 38% · 详情 62%", "cursor_test.go:42"} {
+				if !strings.Contains(plain, want) {
+					t.Errorf("missing %q:\n%s", want, plain)
+				}
+			}
+			// Assert the actual theme colors as well as the shared text structure.
+			bg, accent := "48;2;17;21;26", "38;2;143;184;255"
+			if theme == "light" {
+				bg, accent = "48;2;251;252;253", "38;2;43;103;209"
+			}
+			for _, color := range []string{bg, accent} {
+				if !strings.Contains(view, color) {
+					t.Errorf("missing theme color %s", color)
+				}
+			}
+			assertSize(t, view, m.width, m.height)
+			t.Log("\n" + plain)
+		})
+	}
+}
+
+func TestRatioFocusAndTabs(t *testing.T) {
+	svc, task, _ := fixtureTask(t)
+	m := refresh(newModel(svc, "dark"))
+	for _, tc := range []struct {
+		key  string
+		want int
+	}{{"[", 33}, {"]", 38}, {"]", 43}, {"=", 38}} {
+		m, _ = update(m, key(tc.key))
+		if m.ratio != tc.want {
+			t.Fatalf("%s: ratio=%d", tc.key, m.ratio)
+		}
+	}
+	for i := 0; i < 30; i++ {
+		m, _ = update(m, key("["))
+	}
+	if m.ratio != 20 {
+		t.Fatal(m.ratio)
+	}
+	for i := 0; i < 30; i++ {
+		m, _ = update(m, key("]"))
+	}
+	if m.ratio != 70 {
+		t.Fatal(m.ratio)
+	}
+	m, _ = update(m, key("="))
+	b, err := os.ReadFile(filepath.Join(svc.Home, "tui.json"))
+	if err != nil || !strings.Contains(string(b), `"ratio":38`) {
+		t.Fatalf("settings: %s %v", b, err)
+	}
+	m, _ = update(m, key("]"))
+	if got := newModel(svc, "light").ratio; got != 43 {
+		t.Fatal("ratio not restored:", got)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if !m.detail {
+		t.Fatal("missing detail focus")
+	}
+	for i, k := range []string{"1", "2", "3", "4"} {
+		m, _ = update(m, key(k))
+		if m.tab != i || !strings.Contains(ansi.Strip(m.details()), tabs[i]) {
+			t.Fatal(k)
+		}
+	}
+	m, _ = update(m, key("1"))
+	m, _ = update(m, key("e"))
+	if !m.expand {
+		t.Fatal("e did not expand")
+	}
+	m, _ = update(m, key("e"))
+	if m.expand {
+		t.Fatal("e did not fold")
+	}
+	m, _ = update(m, key("z"))
+	lw, _, dw, _ := m.layout()
+	if !m.zoom || lw != 0 || dw != m.width || strings.Contains(m.View(), "进行中") {
+		t.Fatal("zoom did not hide list")
+	}
+	m, _ = update(m, key("z"))
+	if m.zoom {
+		t.Fatal("zoom did not restore")
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyTab})
+	if m.detail || m.task().ID != task.ID {
+		t.Fatal("focus changed selection")
+	}
+	m, _ = update(m, key("c"))
+	m, cmd := update(m, key("q"))
+	if m.cancelID != "" || cmd != nil {
+		t.Fatal("other key should dismiss confirmation")
+	}
+	for _, invalid := range []string{`{"ratio":99}`, `{"ratio":0}`, `{broken`} {
+		if err := os.WriteFile(filepath.Join(svc.Home, "tui.json"), []byte(invalid), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if got := newModel(svc).ratio; got != 38 {
+			t.Fatal("invalid settings accepted:", got)
+		}
+	}
+	// Unwritable settings are optional and must not interfere with key handling.
+	m.svc = &app.Service{Home: filepath.Join(svc.Home, "tui.json", "child")}
+	m, _ = update(m, key("]"))
+	if m.ratio != 48 {
+		t.Fatal(m.ratio)
+	}
+}
+
+func TestMouseDividerAndNarrowLayout(t *testing.T) {
+	m := newModel(&app.Service{Home: t.TempDir()}, "light")
+	for _, size := range []tea.WindowSizeMsg{{Width: 140, Height: 40}, {Width: 80, Height: 40}} {
+		m, _ = update(m, size)
+		m.setRatio(38)
+		lw, lh, _, _ := m.layout()
+		x, y := lw, 5
+		if m.width < 100 {
+			x, y = 5, lh+1
+		}
+		m, _ = update(m, tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+		if !m.dragging {
+			t.Fatal("divider press did not start drag")
+		}
+		if m.width >= 100 {
+			x = (m.width - 1) / 2
+		} else {
+			y = 1 + (m.height-3)/2
+		}
+		m, _ = update(m, tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
+		if m.ratio < 48 || m.ratio > 51 {
+			t.Fatal("drag ratio:", m.ratio)
+		}
+		m, _ = update(m, tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionRelease})
+		if m.dragging || newModel(m.svc).ratio != m.ratio {
+			t.Fatal("drag not saved")
+		}
+		lw, lh, dw, dh := m.layout()
+		if m.width < 100 && (lw != m.width || dw != m.width || lh+dh+1 != m.height-2) {
+			t.Fatal("narrow dimensions")
+		}
+		assertSize(t, m.View(), size.Width, size.Height)
+	}
+}
+
+func TestFailureAlert(t *testing.T) {
+	// From a real go test failure during this change; the location is more
+	// useful than the surrounding FAIL lines and package summary.
+	output := "--- FAIL: TestDetailsAndElapsed (0.01s)\n    tui_test.go:230: missing \"final reply\"\nFAIL\nFAIL\tbaton/internal/tui\t3.021s\nFAIL\n"
+	if got := failureLine(output); got != `tui_test.go:230: missing "final reply"` {
+		t.Fatal(got)
+	}
+	for _, tc := range []struct{ output, want string }{{"noise\npanic: bad input\nFAIL", "panic: bad input"}, {"noise\nerror: invalid cursor\nFAIL", "error: invalid cursor"}, {"noise\nFAIL pkg", "FAIL pkg"}, {"first\nlast\n", "last"}} {
+		if got := failureLine(tc.output); got != tc.want {
+			t.Fatal(got)
+		}
+	}
+	task := &app.Task{Turns: []app.Turn{{Error: "agent crashed"}}, Verify: verify.Result{Checks: []verify.Outcome{{Command: "go test ./...", Status: "fail", OutputTail: output}, {Command: "second", Status: "fail", OutputTail: "ignore"}}}}
+	if got := failureAlert(task); got != `go test ./... · tui_test.go:230: missing "final reply"` {
+		t.Fatal(got)
+	}
+	task.Verify.Checks = nil
+	if got := failureAlert(task); got != "agent crashed" {
+		t.Fatal(got)
+	}
+}
+
+func TestMarkdownCache(t *testing.T) {
+	m := newModel(&app.Service{Home: t.TempDir()}, "dark")
+	calls := 0
+	m.render = func(text string, w int, theme string) (string, error) { calls++; return renderMarkdown(text, w, theme) }
+	turn := app.Turn{Number: 1, FinalText: "## 回复\n\n- **已修复** `cursor`\n"}
+	first := m.reply("task", turn, 60)
+	if second := m.reply("task", turn, 60); first != second || calls != 1 {
+		t.Fatal("cache miss", calls)
+	}
+	m.reply("other", turn, 60)
+	m.reply("task", turn, 61)
+	m.theme = "light"
+	m.reply("task", turn, 61)
+	turn.Number++
+	m.reply("task", turn, 61)
+	turn.FinalText += "new text"
+	m.reply("task", turn, 61)
+	if calls != 6 {
+		t.Fatal("cache keys did not invalidate:", calls)
+	}
+	m.render = func(string, int, string) (string, error) { return "", os.ErrInvalid }
+	turn.FinalText = "fallback **raw text**"
+	if got := m.reply("fallback", turn, 60); got != turn.FinalText {
+		t.Fatal(got)
+	}
+}
+
+func TestStdoutCacheAndSpin(t *testing.T) {
+	svc, task, dir := fixtureTask(t)
+	m := refresh(newModel(svc, "dark"))
+	k := logKey{task.ID, 1}
+	first := m.logs[k]
+	if len(first.events) == 0 {
+		t.Fatal("no fixture events")
+	}
+	m = refresh(m)
+	if &m.logs[k].events[0] != &first.events[0] {
+		t.Fatal("unchanged stdout was parsed again")
+	}
+	path := filepath.Join(dir, "turn-1.stdout")
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = f.WriteString("\n{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"new event\"}}\n")
+	f.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = refresh(m)
+	if len(m.logs[k].events) != len(first.events)+1 {
+		t.Fatal("growth did not parse new event")
+	}
+	before := m.logs[k]
+	// Remove the store: spin must redraw successfully without a service/file read.
+	m.svc = &app.Service{Home: filepath.Join(svc.Home, "missing")}
+	frame := m.frame
+	m, cmd := update(m, spinMsg{})
+	if cmd == nil || m.frame == frame || &m.logs[k].events[0] != &before.events[0] || m.err != nil {
+		t.Fatal("spin performed refresh")
+	}
+}
+
+func TestConversationEventsDiffAndChecks(t *testing.T) {
+	svc, task, _ := fixtureTask(t)
+	m := newModel(svc, "light")
+	task.Title, task.Status, task.Mode = "两轮任务", "succeeded", "write"
+	end := task.Turns[0].StartedAt.Add(10 * time.Second)
+	task.Turns[0].EndedAt, task.Turns[0].FinalText = &end, "第一轮回复"
+	task.Turns[0].Verify = &verify.Result{Status: "pass", Checks: []verify.Outcome{{Command: "go test ./...", Status: "pass"}}}
+	task.Turns = append(task.Turns, app.Turn{Number: 2, Prompt: "第二轮问题", StartedAt: &end, EndedAt: &end, FinalText: "第二轮回复"})
+	m.tasks = []*app.Task{task}
+	m.logs[logKey{task.ID, 1}] = logSnapshot{events: []agent.Event{{Kind: "tool", Category: "read", Text: "read old.go"}}}
+	m.logs[logKey{task.ID, 2}] = logSnapshot{events: []agent.Event{{Kind: "tool", Category: "command", Text: "go test", Right: "exit 1 · 0.3s"}}}
+	m.syncViewport()
+	plain := ansi.Strip(m.details())
+	for _, want := range []string{"你 · 第 1 轮", "你 · 第 2 轮", "codex · 第 1 轮 · 10s · 检查 1/1 通过", "第一轮回复", "第二轮回复", "⋯ 1 个工具调用 · e 展开"} {
+		if !strings.Contains(plain, want) {
+			t.Fatal("missing:", want, plain)
+		}
+	}
+	if strings.Contains(plain, "old.go") {
+		t.Fatal("tools should be folded")
+	}
+	m.expand = true
+	if !strings.Contains(m.details(), "old.go") {
+		t.Fatal("missing expanded history")
+	}
+	m.tab = 1
+	plain = ansi.Strip(m.details())
+	if strings.Contains(plain, "old.go") || !strings.Contains(plain, "exit 1 · 0.3s") {
+		t.Fatal(plain)
+	}
+	m.tab = 2
+	m.patches[task.ID] = fileSnapshot{text: "diff --git a/a.go b/a.go\n@@ -1 +1 @@\n-old\n+new\n" + strings.Repeat(" context\n", 2001)}
+	if plain = ansi.Strip(m.details()); !strings.Contains(plain, "已截断") || !strings.Contains(plain, "+new") {
+		t.Fatal("diff missing")
+	}
+	task.Mode = "read"
+	if !strings.Contains(m.details(), "只读任务，没有改动") {
+		t.Fatal(m.details())
+	}
+	m.tab = 3
+	task.Checks = []string{"go test ./...", "go vet ./..."}
+	task.Verify.Checks = []verify.Outcome{{Command: task.Checks[0], Status: "fail", DurationMS: 300, ExitCode: 1, OutputTail: "omit me\n" + strings.Repeat("failure detail\n", 12)}}
+	plain = ansi.Strip(m.details())
+	if strings.Contains(plain, "omit me") || strings.Count(plain, "failure detail") != 12 || !strings.Contains(plain, "◌ 等待中") || !strings.Contains(plain, "0.3s · exit 1") {
+		t.Fatal(plain)
+	}
+}
+
+func TestPendingTurnDoesNotReuseChecks(t *testing.T) {
+	svc, task, _ := fixtureTask(t)
+	task.Status = "queued"
+	task.Turns = append(task.Turns, app.Turn{Number: 2, Prompt: "new round"})
+	task.Verify = verify.Result{Round: 1, Status: "pass", Checks: []verify.Outcome{{Status: "pass", Command: task.Checks[0]}}}
+	m := newModel(svc, "dark")
+	m.tasks = []*app.Task{task}
+	m.tab = 3
+	m.syncViewport()
+	view := ansi.Strip(m.details())
+	if strings.Contains(view, "✓ go test") || !strings.Contains(view, "◌ go test") || !strings.Contains(view, "◌ 等待中") {
+		t.Fatal(view)
+	}
+}
+
+func TestMarkdownFramesUseCache(t *testing.T) {
+	svc, task, _ := fixtureTask(t)
+	first := task.Turns[0]
+	end := first.StartedAt.Add(10 * time.Second)
+	first.EndedAt, first.FinalText = &end, "## 已完成\n\n回复内容。"
+	task.Turns = []app.Turn{first, {Number: 2, Prompt: "继续", StartedAt: &end}}
+	m := newModel(svc, "dark")
+	m.tasks = []*app.Task{task}
+	calls := 0
+	m.render = func(text string, w int, theme string) (string, error) { calls++; return renderMarkdown(text, w, theme) }
+	m.syncViewport()
+	rendered := calls // two prompts and one reply
+	for i := 0; i < 10; i++ {
+		m, _ = update(m, spinMsg{})
+		_ = m.View()
+	}
+	if rendered != 3 || calls != rendered {
+		t.Fatalf("markdown renders: %d initially, %d after 10 frames", rendered, calls)
+	}
+}
+
+func TestPaintKeepsBackgroundAfterNestedReset(t *testing.T) {
+	defer lipgloss.SetColorProfile(lipgloss.ColorProfile())
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	bg := lipgloss.NewStyle().Background(lipgloss.Color("#e3ecfa"))
+	on, _, _ := strings.Cut(bg.Render("x"), "x")
+	got := paint("a"+lipgloss.NewStyle().Bold(true).Render("b")+"c", bg, 6)
+	if !strings.Contains(got, "\x1b[0m"+on+"c") {
+		t.Fatalf("background not re-applied after nested reset: %q", got)
+	}
+	if lipgloss.Width(got) != 6 {
+		t.Fatalf("width %d, want 6", lipgloss.Width(got))
+	}
+}
+
+func TestSpinnerStopsWhenNothingRuns(t *testing.T) {
+	m := model{tasks: []*app.Task{{Status: "succeeded"}}, spinning: true}
+	next, cmd := m.Update(spinMsg{})
+	if cmd != nil || next.(model).spinning {
+		t.Fatal("spinner must stop scheduling ticks when no task is running")
+	}
+}
+
+func TestMarkdownElements(t *testing.T) {
+	defer lipgloss.SetColorProfile(lipgloss.ColorProfile())
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	md := "## 二级标题\n\n用 `go test` 跑。\n\n- 一\n- 二\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```go\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```\n"
+	out, err := renderMarkdown(md, 60, "dark")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := ansi.Strip(out)
+	for _, want := range []string{"▌ 二级标题", "• 一", "│", " go", "    fmt.Println"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("missing %q in:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "## ") || strings.Contains(plain, "```") || strings.Contains(plain, "BATONCODE") {
+		t.Errorf("raw markdown left in:\n%s", plain)
+	}
+	codeBG := "48;2;23;28;35" // dark --code #171c23
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(ansi.Strip(line), "fmt.Println") && !strings.Contains(line, codeBG) {
+			t.Errorf("code line without block background: %q", line)
+		}
+	}
+}
+
+func TestLongPromptFolds(t *testing.T) {
+	svc, task, _ := fixtureTask(t)
+	task.Turns[0].Prompt = strings.Repeat("一行\n\n", 30)
+	m := newModel(svc, "dark")
+	m.tasks = []*app.Task{task}
+	if got := m.prompt(task.ID, task.Turns[0], 60); !strings.Contains(got, "e 展开") {
+		t.Fatalf("long prompt not folded:\n%s", got)
+	}
+	m.expand = true
+	if got := m.prompt(task.ID, task.Turns[0], 60); strings.Contains(got, "e 展开") {
+		t.Fatal("expanded prompt still folded")
+	}
+}

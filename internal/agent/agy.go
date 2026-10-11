@@ -11,7 +11,7 @@ func agyArgv(o Options) []string {
 	if o.Mode == "write" {
 		mode = "accept-edits"
 	}
-	a := []string{"-p", o.Prompt, "--output-format", "json", "--mode", mode}
+	a := []string{"-p", o.Prompt, "--output-format", "stream-json", "--mode", mode}
 	if o.Model != "" {
 		a = append(a, "--model", o.Model)
 	}
@@ -25,6 +25,30 @@ func agyArgv(o Options) []string {
 }
 
 func parseAgy(b []byte) (Result, error) {
+	var result json.RawMessage
+	err := jsonLines(b, func(raw json.RawMessage) error {
+		var e struct {
+			Event  string
+			Result json.RawMessage
+		}
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return err
+		}
+		if e.Event == "result" {
+			result = e.Result
+		}
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	if result == nil {
+		return Result{}, fmt.Errorf("missing result")
+	}
+	return parseAgyResult(result)
+}
+
+func parseAgyResult(b []byte) (Result, error) {
 	var e struct {
 		ConversationID   string `json:"conversation_id"`
 		Status, Response string

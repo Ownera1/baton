@@ -24,14 +24,24 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	if in.Mode != "read" && in.Mode != "write" {
 		return nil, fmt.Errorf("mode must be read or write")
 	}
+	var err error
 	if in.Repo == "" {
-		return nil, fmt.Errorf("repo is required")
+		if in.Repo, err = os.Getwd(); err != nil {
+			return nil, err
+		}
+	}
+	if in.Agent == "" {
+		in.Agent = DefaultAgent()
 	}
 	prompt, err := Text(in.Task)
 	if err != nil {
 		return nil, err
 	}
-	timeout, err := duration(in.Timeout, 30*time.Minute)
+	title := strings.TrimSpace(in.Title)
+	if title == "" {
+		title = TitleFromPrompt(prompt)
+	}
+	timeout, err := duration(in.Timeout, DefaultTimeout)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +59,12 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 		if !info.HasCommits {
 			return nil, fmt.Errorf("write mode requires a repository with a HEAD commit")
 		}
+		if in.Checks == nil {
+			in.Checks = DetectChecks(info.Root)
+		}
+	}
+	if in.NoChecks {
+		in.Checks = nil
 	}
 	var entropy [8]byte
 	if _, err := rand.Read(entropy[:]); err != nil {
@@ -60,7 +76,7 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	t := Task{ID: id, Agent: in.Agent, Mode: in.Mode, Repo: info.Root, BaseCommit: info.Head,
+	t := Task{ID: id, Title: title, Agent: in.Agent, Mode: in.Mode, Repo: info.Root, BaseCommit: info.Head,
 		Model: in.Model, Effort: in.Effort, Checks: in.Checks, Status: "queued", Turns: []Turn{},
 		Verify: verify.Result{Status: verify.StatusNone, Checks: []verify.Outcome{}}, CreatedAt: now, UpdatedAt: now}
 	if t.Checks == nil {
@@ -168,7 +184,7 @@ func (s *Service) Reply(in ReplyRequest) (*Submitted, error) {
 	if err != nil {
 		return nil, err
 	}
-	timeout, err := duration(in.Timeout, 30*time.Minute)
+	timeout, err := duration(in.Timeout, DefaultTimeout)
 	if err != nil {
 		return nil, err
 	}

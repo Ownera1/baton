@@ -10,28 +10,43 @@ import (
 
 func TestParseFixtures(t *testing.T) {
 	cases := []struct {
-		name, file, id string
+		name, id, text string
 		cost           bool
 	}{
-		{"codex", "codex.exec.jsonl", "01a12a19-a475-7021-822e-76071a979957", false},
-		{"claude", "claude.json", "f648bc13-fbec-477a-bdc2-4ac3be5f39cb", true},
-		{"grok", "grok.json", "01a12a19-ad0a-7790-9d83-dcb96f90dc22", true},
-		{"agy", "agy.json", "d02ba1e0-dae3-4537-9c55-91b9889535a1", false},
-		{"pi", "pi.jsonl", "01a12a1a-e032-731f-8373-cdda41aa692d", true},
+		{"codex", "01a12aa4-3781-7181-a0c4-33d76e940f0a", "baton-fixture", false},
+		{"claude", "028766dc-fc4b-48bc-91a1-e2577117a785", "baton-fixture", true},
+		// The real grok sample includes an explanation after the file content.
+		{"grok", "01a12aa7-8ccd-7b63-aa3d-c1af79300e27", "baton-fixture\n\n`ls -la` is not available in this session, so I listed the directory with the file tool instead. It contains one entry:\n\n- `a.txt`", true},
+		{"agy", "4ab36d9f-121b-476e-8736-01035b3a657d", "baton-fixture", false},
+		{"pi", "01a12aa4-36e9-7576-a665-f8ca272a545e", "baton-fixture", true},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", c.file))
+			b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "fixtures", "stream", c.name+".jsonl"))
 			if err != nil {
 				t.Fatal(err)
 			}
 			r := Parse(c.name, b, "", 0)
-			if r.Error != "" || r.SessionID != c.id || r.FinalText != "OK" || len(r.Usage) == 0 || (r.CostUSD != nil) != c.cost {
+			if r.Error != "" || r.SessionID != c.id || r.FinalText != c.text || len(r.Usage) == 0 || (r.CostUSD != nil) != c.cost {
 				t.Fatalf("parsed result: %+v", r)
 			}
 			if c.cost && *r.CostUSD <= 0 {
 				t.Fatal("missing positive cost")
 			}
+			found := false
+			for _, e := range Events(c.name, b) {
+				if e.Kind == "tool" && strings.Contains(e.Text, "a.txt") {
+					found = true
+				}
+				if strings.ContainsAny(e.Text, "\n\r") {
+					t.Fatalf("event must be one line: %+v", e)
+				}
+			}
+			if !found {
+				t.Fatalf("missing a.txt tool event: %+v", Events(c.name, b))
+			}
+			// The reader may catch the writer in the middle of a JSON record.
+			Events(c.name, b[:len(b)/2])
 			if r := Parse(c.name, b, "", 3); !strings.Contains(r.Error, "code 3") {
 				t.Fatalf("nonzero exit: %+v", r)
 			}
@@ -48,9 +63,9 @@ func TestParseFixtures(t *testing.T) {
 func TestReportedErrors(t *testing.T) {
 	cases := []struct{ name, output string }{
 		{"codex", `{"type":"turn.failed","error":{"message":"unauthorized"}}`},
-		{"claude", `{"is_error":true,"subtype":"error_max_turns","result":"stopped"}`},
-		{"grok", `{"sessionId":"s","text":"partial","stopReason":"error"}`},
-		{"agy", `{"conversation_id":"s","status":"FAILED","response":"denied"}`},
+		{"claude", `{"type":"result","is_error":true,"subtype":"error_max_turns","result":"stopped"}`},
+		{"grok", `{"type":"end","sessionId":"s","stopReason":"error"}`},
+		{"agy", `{"event":"result","result":{"conversation_id":"s","status":"FAILED","response":"denied"}}`},
 		{"pi", "{\"type\":\"session\",\"id\":\"s\"}\n{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[],\"stopReason\":\"error\",\"errorMessage\":\"provider error\"}}\n{\"type\":\"agent_end\",\"willRetry\":false}\n"},
 	}
 	for _, c := range cases {
@@ -74,7 +89,7 @@ func TestArgvModesAndResume(t *testing.T) {
 	}{
 		{"codex", codexArgv, []string{"sandbox_mode=\"read-only\""}, []string{"sandbox_mode=\"workspace-write\""}, []string{"resume"}},
 		{"claude", claudeArgv, []string{"--permission-mode", "plan"}, []string{"--permission-mode", "acceptEdits"}, []string{"--resume", "session"}},
-		{"grok", grokArgv, []string{"--permission-mode", "plan"}, []string{"--permission-mode", "auto", "--sandbox", "workspace"}, []string{"-r", "session"}},
+		{"grok", grokArgv, []string{"--permission-mode", "plan", "--tools", "read_file,list_dir,grep"}, []string{"--permission-mode", "auto", "--sandbox", "workspace"}, []string{"-r", "session"}},
 		{"agy", agyArgv, []string{"--mode", "plan"}, []string{"--mode", "accept-edits"}, []string{"--conversation", "session"}},
 		{"pi", piArgv, []string{"--tools", "read,grep,find,ls"}, nil, []string{"--session", "session"}},
 	}
@@ -103,18 +118,38 @@ func TestArgvModesAndResume(t *testing.T) {
 						t.Fatal(a)
 					}
 				}
-				if c.name == "pi" && mode == "write" && strings.Contains(strings.Join(a, " "), "--tools") {
+				if (c.name == "pi" || c.name == "grok") && mode == "write" && strings.Contains(strings.Join(a, " "), "--tools") {
+					t.Fatal(a)
+				}
+				formats := map[string]string{"claude": "stream-json", "grok": "streaming-json", "agy": "stream-json"}
+				if format := formats[c.name]; format != "" && !strings.Contains(strings.Join(a, " "), "--output-format "+format) {
+					t.Fatal(a)
+				}
+				if c.name == "claude" && !strings.Contains(strings.Join(a, " "), "--verbose") {
 					t.Fatal(a)
 				}
 			}
 		})
 	}
-	if r := Parse("claude", []byte(`{"session_id":"s","result":"done","subtype":"success","permission_denials":[{"tool_name":"Bash"}]}`), "", 0); r.Error != "" || len(r.Warnings) != 1 {
+	if r := Parse("claude", []byte(`{"type":"result","session_id":"s","result":"done","subtype":"success","permission_denials":[{"tool_name":"Bash"}]}`), "", 0); r.Error != "" || len(r.Warnings) != 1 {
 		t.Fatalf("permission denials must warn, not fail: %+v", r)
 	}
 	o.Mode = "read"
 	o.SessionID = ""
-	if got := codexArgv(o); !reflect.DeepEqual(got, []string{"exec", "-s", "read-only", "-C", "/repo path", "--json", "-o", "/turn.last", "-m", "model", "-c", "model_reasoning_effort=\"high\"", "--", "task"}) {
+	if got := codexArgv(o); !reflect.DeepEqual(got, []string{"exec", "-s", "read-only", "-C", "/repo path", "-c", `approval_policy="never"`, "--json", "-o", "/turn.last", "-m", "model", "-c", "model_reasoning_effort=\"high\"", "--", "task"}) {
 		t.Fatal(got)
+	}
+}
+
+func TestCodexTransientErrorIsWarning(t *testing.T) {
+	out := "{\"type\":\"thread.started\",\"thread_id\":\"s\"}\n" +
+		"{\"type\":\"error\",\"message\":\"Reconnecting... 2/5 (stream disconnected before completion: tls handshake eof)\"}\n" +
+		"{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"done\"}}\n" +
+		"{\"type\":\"turn.completed\",\"usage\":{}}\n"
+	if r := Parse("codex", []byte(out), "", 0); r.Error != "" || r.FinalText != "done" || len(r.Warnings) != 1 {
+		t.Fatalf("reconnect before turn.completed must warn, not fail: %+v", r)
+	}
+	if r := Parse("codex", []byte("{\"type\":\"thread.started\",\"thread_id\":\"s\"}\n{\"type\":\"error\",\"message\":\"unauthorized\"}\n"), "", 1); r.Error == "" {
+		t.Fatal("an error without turn.completed must fail")
 	}
 }
