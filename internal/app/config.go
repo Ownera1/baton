@@ -48,16 +48,19 @@ func ConfigPath() (string, error) {
 	return filepath.Join(dir, "config.json"), err
 }
 
-// LoadConfig reads the config; a missing file is an empty config. A broken one
-// is an error rather than ignored, so a configured model never silently falls
-// back to the agent's own.
-func LoadConfig() (c Config, path string, exists bool, err error) {
+// LoadConfig reads the config and returns the bytes it came from, nil for a
+// missing file (an empty config). A broken file is an error rather than
+// ignored, so a configured model never silently falls back to the agent's own.
+func LoadConfig() (c Config, path string, raw []byte, err error) {
 	if path, err = ConfigPath(); err != nil {
-		return c, path, false, err
+		return c, path, nil, err
 	}
 	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return c, path, false, nil
+		return c, path, nil, nil
+	}
+	if b == nil {
+		b = []byte{}
 	}
 	if err == nil {
 		dec := json.NewDecoder(bytes.NewReader(b))
@@ -70,9 +73,73 @@ func LoadConfig() (c Config, path string, exists bool, err error) {
 		err = c.Validate()
 	}
 	if err != nil {
-		return c, path, true, fmt.Errorf("%s: %w", path, err)
+		return c, path, b, fmt.Errorf("%s: %w", path, err)
 	}
-	return c, path, true, nil
+	return c, path, b, nil
+}
+
+// Marshal is the file SaveConfig writes: indented, empty fields and agents omitted.
+func (c Config) Marshal() ([]byte, error) {
+	agents := map[string]AgentConfig{}
+	for name, a := range c.Agents {
+		if a != (AgentConfig{}) {
+			agents[name] = a
+		}
+	}
+	c.Agents = agents
+	b, err := json.MarshalIndent(c, "", "  ")
+	return append(b, '\n'), err
+}
+
+// ErrConfigChanged means the file changed after it was loaded.
+var ErrConfigChanged = errors.New("config file changed since it was loaded")
+
+// SaveConfig validates c and replaces the file atomically with mode 0600,
+// omitting empty fields. It refuses when the file no longer holds loaded (nil
+// for a file that did not exist), so an outside edit is never overwritten.
+func SaveConfig(c Config, loaded []byte) ([]byte, error) {
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	path, err := ConfigPath()
+	if err != nil {
+		return nil, err
+	}
+	current, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		current, err = nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if (current == nil) != (loaded == nil) || !bytes.Equal(current, loaded) {
+		return nil, ErrConfigChanged
+	}
+	b, err := c.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".config-*.json")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(f.Name()) // no-op after the rename
+	if _, err = f.Write(b); err == nil {
+		err = f.Sync()
+	}
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Rename(f.Name(), path) // CreateTemp files are already 0600
+	}
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
 }
 
 func (c Config) Validate() error {

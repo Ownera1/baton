@@ -24,7 +24,21 @@ type Result struct {
 	Warnings  []string        `json:"warnings,omitempty"`
 }
 
+// Argv is the executable, from o.Path or PATH, followed by Args.
 func Argv(name string, o Options) ([]string, error) {
+	args, err := Args(name, o)
+	if err != nil {
+		return nil, err
+	}
+	path, err := exec.LookPath(cmp.Or(o.Path, name)) // Direct exec deliberately ignores shell aliases.
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{path}, args...), nil
+}
+
+// Args builds the agent's arguments without looking up its executable.
+func Args(name string, o Options) ([]string, error) {
 	var args []string
 	switch name {
 	case "codex":
@@ -40,11 +54,7 @@ func Argv(name string, o Options) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported agent %q", name)
 	}
-	path, err := exec.LookPath(cmp.Or(o.Path, name)) // Direct exec deliberately ignores shell aliases.
-	if err != nil {
-		return nil, err
-	}
-	return append([]string{path}, args...), nil
+	return args, nil
 }
 
 func Parse(name string, stdout []byte, last string, exitCode int) Result {

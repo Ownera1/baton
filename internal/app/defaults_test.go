@@ -69,8 +69,8 @@ func TestLoadConfig(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("BATON_CONFIG_DIR", dir)
 	t.Setenv("BATON_AGENT", "")
-	if c, _, exists, err := LoadConfig(); err != nil || exists || c.DefaultAgent() != "codex" || c.TurnTimeout() != DefaultTimeout {
-		t.Fatalf("missing file: %+v %v %v", c, exists, err)
+	if c, _, raw, err := LoadConfig(); err != nil || raw != nil || c.DefaultAgent() != "codex" || c.TurnTimeout() != DefaultTimeout {
+		t.Fatalf("missing file: %+v %q %v", c, raw, err)
 	}
 	write := func(body string) {
 		t.Helper()
@@ -79,8 +79,8 @@ func TestLoadConfig(t *testing.T) {
 		}
 	}
 	write(`{"agent":"claude","timeout":"30m","agents":{"claude":{"model":"opus","effort":"high","path":"/opt/claude"},"pi":{"path":"pi-dev"}}}`)
-	c, _, exists, err := LoadConfig()
-	if err != nil || !exists || c.DefaultAgent() != "claude" || c.TurnTimeout() != 30*time.Minute || c.Agents["claude"] != (AgentConfig{"opus", "high", "/opt/claude"}) {
+	c, _, raw, err := LoadConfig()
+	if err != nil || raw == nil || c.DefaultAgent() != "claude" || c.TurnTimeout() != 30*time.Minute || c.Agents["claude"] != (AgentConfig{"opus", "high", "/opt/claude"}) {
 		t.Fatalf("valid file: %+v %v", c, err)
 	}
 	t.Setenv("BATON_AGENT", "grok")
@@ -100,5 +100,37 @@ func TestLoadConfig(t *testing.T) {
 		if _, _, _, err := LoadConfig(); err == nil {
 			t.Errorf("%s: want error", body)
 		}
+	}
+}
+
+func TestSaveConfig(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "baton")
+	t.Setenv("BATON_CONFIG_DIR", dir)
+	c := Config{Timeout: "1h", Agents: map[string]AgentConfig{"codex": {Model: "m"}, "pi": {}}}
+	if _, err := SaveConfig(c, []byte("{}")); err != ErrConfigChanged {
+		t.Fatalf("missing file loaded as existing: %v", err)
+	}
+	raw, err := SaveConfig(c, nil)
+	if err != nil || string(raw) != "{\n  \"timeout\": \"1h\",\n  \"agents\": {\n    \"codex\": {\n      \"model\": \"m\"\n    }\n  }\n}\n" {
+		t.Fatalf("%q %v", raw, err)
+	}
+	if st, err := os.Stat(filepath.Join(dir, "config.json")); err != nil || st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode: %v %v", st, err)
+	}
+	got, _, loaded, err := LoadConfig()
+	if err != nil || got.Agents["codex"].Model != "m" || string(loaded) != string(raw) {
+		t.Fatalf("reload: %+v %v", got, err)
+	}
+	if _, err := SaveConfig(Config{Agent: "gpt"}, loaded); err == nil {
+		t.Fatal("invalid config saved")
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"agent":"pi"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SaveConfig(Config{}, loaded); err != ErrConfigChanged {
+		t.Fatalf("outside edit overwritten: %v", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Fatalf("temp files left: %v", entries)
 	}
 }

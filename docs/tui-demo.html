@@ -1,4 +1,5 @@
 <title>Baton 面板设计</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=IBM+Plex+Sans:wght@400;600&display=swap">
@@ -174,6 +175,38 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
 .notes ul { margin: 0; padding-left: 20px; display: grid; gap: 6px; color: var(--ink-dim); line-height: 1.6; max-width: 80ch; }
 .notes b { color: var(--ink); font-weight: 600; }
 
+/* Settings mode: same split, the panes show config.json fields and the selected field */
+.field { display: grid; grid-template-columns: 8ch 1fr 2ch; column-gap: 1ch; padding: 3px 12px 3px 22px; border-left: 2px solid transparent; cursor: pointer; }
+.field:hover { background: var(--hover); }
+.field.sel { background: var(--sel); border-left-color: var(--accent); }
+.field .fk { color: var(--ink-dim); }
+.field .fv { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.field .fm { text-align: right; }
+.fielderr { grid-column: 2 / 4; color: var(--bad); font-size: 12px; }
+.def { color: var(--ink-faint); }
+.arrow { color: var(--accent); }
+.changed, .warn, .fielderr.warn { color: var(--wait); }
+.err { color: var(--bad); }
+.input { display: inline-block; min-width: 1ch; background: var(--code); color: var(--ink); padding: 0 4px; outline: 1px solid var(--accent); white-space: pre; }
+.caret { display: inline-block; width: 1ch; background: var(--accent); animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.desc { color: var(--ink-dim); line-height: 1.6; }
+.desc code { background: var(--code); color: var(--md-code); padding: 0 4px; white-space: nowrap; }
+.sec { display: grid; gap: 4px; }
+.sec-h { color: var(--ink-faint); font-size: 12px; }
+.opts { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+.opt { padding: 0 6px; color: var(--ink-dim); border: 1px solid var(--line); border-radius: 3px; }
+.opt.on { color: var(--term); background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.cmd, .json { margin: 0; background: var(--code); padding: 8px 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+.cmd .hl { color: var(--accent); font-weight: 600; }
+.cmd .ph { color: var(--ink-faint); }
+.json { white-space: pre; word-break: normal; padding: 8px 0; }
+.json div { padding: 0 12px; }
+.json .add { background: var(--diff-add); }
+.json .add::before { content: "+"; margin-left: -1ch; }
+.cmp { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.cmp s { color: var(--ink-faint); }
+
 @media (max-width: 760px) {
   .t-body { flex-direction: column; }
   .pane.list { width: auto !important; }
@@ -181,13 +214,13 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
   .divider::before { inset: 4px 0; }
   .chrome .hint { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { .ev.new { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .ev.new, .caret { animation: none; } }
 </style>
 
 <main class="wrap">
   <header class="intro">
     <h1>Baton 面板</h1>
-    <p>TUI 改版的可交互演示，数据为示例。点击终端后可用键盘：<kbd>↑</kbd><kbd>↓</kbd> 选任务、<kbd>tab</kbd> 切焦点、<kbd>1</kbd>–<kbd>4</kbd> 切标签、<kbd>[</kbd><kbd>]</kbd> 调比例、<kbd>z</kbd> 专注详情、<kbd>e</kbd> 展开工具调用、<kbd>c</kbd> 取消任务。分隔线也可以拖动。</p>
+    <p>TUI 改版的可交互演示，数据为示例。点击终端后可用键盘：<kbd>↑</kbd><kbd>↓</kbd> 选任务、<kbd>tab</kbd> 切焦点、<kbd>1</kbd>–<kbd>4</kbd> 切标签、<kbd>[</kbd><kbd>]</kbd> 调比例、<kbd>z</kbd> 专注详情、<kbd>e</kbd> 展开工具调用、<kbd>c</kbd> 取消任务、<kbd>s</kbd> 切到设置（<kbd>esc</kbd> 返回）。分隔线也可以拖动。</p>
     <div class="row">
       <div class="seg" role="group" aria-label="终端主题"><button type="button" data-set-theme="light" aria-pressed="false">浅色</button><button type="button" data-set-theme="dark" aria-pressed="false">深色</button></div>
       <button class="btn" id="replay" type="button">重新播放运行中的任务</button>
@@ -200,12 +233,12 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       <div class="t-head" id="head"></div>
       <div class="t-body" id="body">
         <div class="pane list" id="listPane">
-          <div class="pane-title"><span>对话</span></div>
+          <div class="pane-title"><span id="listTitle">对话</span></div>
           <div class="scroll" id="list"></div>
         </div>
         <div class="divider" id="divider" role="separator" aria-orientation="vertical" aria-label="拖动调整列表和详情的比例"></div>
         <div class="pane detail" id="detailPane">
-          <div class="pane-title"><span>详情</span></div>
+          <div class="pane-title"><span id="detailTitle">详情</span></div>
           <div class="scroll" id="detail"></div>
         </div>
       </div>
@@ -222,6 +255,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       <li><b>详情按对话展示</b>：每一轮的提问和回复上下排列，回复按 Markdown 渲染，工具调用默认折叠成一行。</li>
       <li><b>比例可调</b>：<kbd>[</kbd> <kbd>]</kbd> 每次 5%，<kbd>=</kbd> 复位，<kbd>z</kbd> 只看详情，也可以拖动分隔线；比例会记住。</li>
       <li><b>实时事件更好读</b>：每个工具调用一行，读文件、改文件、跑命令用不同符号，命令带退出码和耗时。</li>
+      <li><b>设置在同一个面板里</b>：按 <kbd>s</kbd>，左栏换成 <code>~/.config/baton/config.json</code> 的 17 项（全局 2 项 + 每个 Agent 的 model、effort、path），右栏说明当前项：可选值、这个 Agent 的完整命令预览（配置带来的参数高亮）和保存后的文件（改动行标绿）。<kbd>←</kbd><kbd>→</kbd> 切换取值，<kbd>enter</kbd> 输入，<kbd>d</kbd> 恢复默认，<kbd>u</kbd> 撤销，<kbd>ctrl+s</kbd> 保存，<kbd>esc</kbd> 回到对话。比例、分隔线和主题与对话模式共用，任务计数照常刷新；未保存的改动在顶栏提示，退出前要确认。<code>baton config</code> 在终端里直接以这个模式打开。</li>
       <li><b>浅色和深色两套主题</b>：默认跟随终端背景自动选择，也可以用 <kbd>--theme light</kbd> 或 <kbd>--theme dark</kbd> 固定。两套主题的状态色都单独调过，浅色背景上的黄色和青色更深，保证可读。</li>
     </ul>
   </section>
@@ -317,7 +351,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
   }
 
   let tasks = initialTasks();
-  const S = { selId: tasks[0].id, focus: "list", tab: 0, ratio: 38, zoom: false, expand: false, confirm: false, notice: "", q: 0, newEv: -1 };
+  const S = { mode: "tasks", selId: tasks[0].id, focus: "list", tab: 0, ratio: 38, zoom: false, expand: false, confirm: false, notice: "", q: 0, newEv: -1 };
   try { const r = Number(localStorage.getItem("baton-demo-ratio")); if (r >= 20 && r <= 70) S.ratio = r; } catch (e) {}
 
   const ordered = () => GROUPS.flatMap(([, sts]) => tasks.filter((t) => sts.includes(t.status)));
@@ -331,6 +365,195 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
   const passed = (t) => t.checks.filter((c) => c[1] === "pass").length;
   const checkMeta = (t) => t.checks.length ? `检查 ${passed(t)}/${t.checks.length}` : "无检查";
 
+  /* Settings mode */
+  const CFG_PATH = "~/.config/baton/config.json";
+  const AGENTS = ["codex", "claude", "grok", "agy", "pi"];
+  // Values listed by each CLI's --help; grok lists none.
+  const EFFORT = {
+    codex: ["minimal", "low", "medium", "high", "xhigh"],
+    claude: ["low", "medium", "high", "xhigh", "max"],
+    grok: null,
+    agy: ["low", "medium", "high", "xhigh", "max"],
+    pi: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+  };
+  const FOUND = { codex: "~/.local/bin/codex", claude: "~/.local/bin/claude", grok: "~/.grok/bin/grok", agy: "~/.local/bin/agy", pi: "~/.local/bin/pi" };
+  const EXISTS = new Set([...Object.values(FOUND), "/opt/homebrew/bin/codex", "/usr/local/bin/claude"]);
+  const SAMPLE = {
+    agent: "", timeout: "",
+    agents: {
+      codex: { model: "gpt-5.5", effort: "high", path: "" },
+      claude: { model: "opus", effort: "xhigh", path: "" },
+      grok: { model: "", effort: "", path: "/opt/homebrew/bin/grok" },
+      agy: { model: "", effort: "", path: "" },
+      pi: { model: "", effort: "", path: "" },
+    },
+  };
+  const clone = (c) => JSON.parse(JSON.stringify(c));
+  const durationOK = (v) => /^(\d+(\.\d+)?(h|m|s|ms))+$/.test(v) && !/^(0+(\.0+)?(h|m|s|ms))+$/.test(v);
+  const fields = [
+    { g: "全局", agent: null, key: "agent", options: ["", ...AGENTS],
+      get: (c) => c.agent, set: (c, v) => (c.agent = v),
+      shown: (v) => v || `<span class="def">默认（codex）</span>`,
+      desc: "<code>baton do</code>、<code>ask</code> 和 MCP 没指定 Agent 时用哪个。环境变量 <code>BATON_AGENT</code> 优先于这里。" },
+    { g: "全局", agent: null, key: "timeout", options: ["", "30m", "1h", "2h", "4h"],
+      get: (c) => c.timeout, set: (c, v) => (c.timeout = v),
+      check: (v) => (!v || durationOK(v) ? "" : "格式如 90m、2h、1h30m"),
+      shown: (v) => v || `<span class="def">默认（2h）</span>`,
+      desc: "单轮上限，包含 Agent 和检查时间。命令行 <code>-timeout</code> 优先。" },
+  ];
+  for (const a of AGENTS) {
+    fields.push(
+      { g: a, agent: a, key: "model",
+        get: (c) => c.agents[a].model, set: (c, v) => (c.agents[a].model = v),
+        shown: (v) => v || `<span class="def">默认（Agent 自己的配置）</span>`,
+        desc: `传给 ${a} 的模型名，原样传入，不校验。命令行 <code>-model</code> 优先；留空时用 ${a} 自己的配置。` },
+      { g: a, agent: a, key: "effort", options: EFFORT[a] ? ["", ...EFFORT[a]] : null,
+        get: (c) => c.agents[a].effort, set: (c, v) => (c.agents[a].effort = v),
+        shown: (v) => v || `<span class="def">默认（Agent 自己的配置）</span>`,
+        desc: EFFORT[a]
+          ? `推理强度，取值来自 <code>${a} --help</code>，也可以按 enter 输入其他值。命令行 <code>-effort</code> 优先。`
+          : "推理强度。<code>grok --help</code> 没列出取值，请按 enter 输入。命令行 <code>-effort</code> 优先。" },
+      { g: a, agent: a, key: "path",
+        get: (c) => c.agents[a].path, set: (c, v) => (c.agents[a].path = v),
+        check: (v) => (!v || v.startsWith("/") || !v.includes("/") ? "" : v.startsWith("~") ? "不展开 ~，请写绝对路径" : "必须是绝对路径或命令名"),
+        warn: (v) => (v && v.startsWith("/") && !EXISTS.has(v) ? "未找到该文件" : ""),
+        shown: (v) => v || `<span class="def">默认 → ${FOUND[a]}</span>`,
+        desc: `可执行文件。留空时在 PATH 里找 <code>${a}</code>（忽略 shell alias），写命令名也会在 PATH 里找。` },
+    );
+  }
+  const C = { saved: clone(SAMPLE), draft: clone(SAMPLE), cur: 0, editing: false, input: "", confirm: false };
+  const changed = () => fields.filter((f) => f.get(C.draft) !== f.get(C.saved));
+  const invalid = () => fields.filter((f) => f.check && f.check(f.get(C.draft)));
+
+  // Same shape as Go's json.MarshalIndent: struct order on top, sorted map keys, empty fields omitted.
+  function toJSON(c) {
+    const o = {};
+    if (c.agent) o.agent = c.agent;
+    if (c.timeout) o.timeout = c.timeout;
+    const agents = {};
+    for (const a of [...AGENTS].sort()) {
+      const x = {};
+      for (const k of ["model", "effort", "path"]) if (c.agents[a][k]) x[k] = c.agents[a][k];
+      if (Object.keys(x).length) agents[a] = x;
+    }
+    if (Object.keys(agents).length) o.agents = agents;
+    return JSON.stringify(o, null, 2);
+  }
+
+  // Lines prefixed with their agent block, so equal lines under different agents still diff.
+  function keyed(json) {
+    let agent = "";
+    return json.split("\n").map((l) => {
+      const m = l.match(/^    "(\w+)": \{$/);
+      if (m) agent = m[1];
+      return agent + "|" + l;
+    });
+  }
+
+  function argv(a, c) {
+    const x = c.agents[a];
+    const hl = (v) => `<span class="hl">${esc(v)}</span>`;
+    const ph = (v) => `<span class="ph">&lt;${v}&gt;</span>`;
+    const opt = (flag, v) => (v ? " " + hl(`${flag} ${v}`) : "");
+    const bin = x.path ? hl(x.path) : esc(FOUND[a]);
+    switch (a) {
+      case "codex": return `${bin} exec -s workspace-write -C ${ph("worktree")} -c approval_policy="never" --json -o ${ph("last")}${opt("-m", x.model)}${x.effort ? " " + hl(`-c model_reasoning_effort="${x.effort}"`) : ""} -- ${ph("任务")}`;
+      case "claude": return `${bin} -p --output-format stream-json --verbose --permission-mode acceptEdits${opt("--model", x.model)}${opt("--effort", x.effort)} ${ph("任务")}`;
+      case "grok": return `${bin} -p ${ph("任务")} --output-format streaming-json --cwd ${ph("worktree")} --permission-mode auto --sandbox workspace${opt("-m", x.model)}${opt("--effort", x.effort)}`;
+      case "agy": return `${bin} -p ${ph("任务")} --output-format stream-json --mode accept-edits${opt("--model", x.model)}${opt("--effort", x.effort)}`;
+      case "pi": return `${bin} -p -ne --mode json${opt("--model", x.model)}${opt("--thinking", x.effort)} ${ph("任务")}`;
+    }
+  }
+
+  function settingsList() {
+    let html = "", group = "";
+    fields.forEach((f, i) => {
+      if (f.g !== group) { group = f.g; html += `<div class="grp">${esc(group.toUpperCase())}</div>`; }
+      const v = f.get(C.draft), on = i === C.cur;
+      let val = f.shown(esc(v));
+      if (on && C.editing) val = `<span class="input">${esc(C.input)}<span class="caret">&nbsp;</span></span>`;
+      else if (on && f.options) val = `<span class="arrow">‹</span> ${val} <span class="arrow">›</span>`;
+      const bad = f.check && f.check(v), warn = f.warn && f.warn(v);
+      const mark = bad ? `<span class="err">✗</span>` : v !== f.get(C.saved) ? `<span class="changed">●</span>` : warn ? `<span class="warn">!</span>` : "";
+      const note = bad ? `<span class="fielderr">${esc(bad)}</span>` : warn ? `<span class="fielderr warn">${esc(warn)}</span>` : "";
+      html += `<div class="field${on ? " sel" : ""}" data-i="${i}"><span class="fk">${f.key}</span><span class="fv">${val}</span><span class="fm">${mark}</span>${note}</div>`;
+    });
+    return html;
+  }
+
+  function settingsDetail() {
+    const f = fields[C.cur], v = f.get(C.draft), old = f.get(C.saved);
+    const [tone, label] = v !== old ? ["queued", "已修改"] : v ? ["succeeded", "已设置"] : ["canceled", "默认"];
+    let html = `<div class="sum st-${tone}"><div class="sum-top"><span class="sum-title">${esc(f.agent ? f.agent + " · " + f.key : f.key)}</span><span class="pill">${label}</span></div><div class="desc">${f.desc}</div></div><div class="tabbody">`;
+    if (f.options) html += `<div class="sec"><div class="sec-h">取值（←→ 切换）</div><div class="opts">${f.options.map((o) => `<span class="opt${o === v ? " on" : ""}">${o ? esc(o) : "默认"}</span>`).join("")}</div></div>`;
+    if (v !== old) html += `<div class="sec"><div class="sec-h">修改</div><div class="cmp"><s>${old ? esc(old) : "默认"}</s><span class="arrow">→</span><b>${v ? esc(v) : "默认"}</b><span class="def">按 u 撤销</span></div></div>`;
+    if (f.agent) html += `<div class="sec"><div class="sec-h">命令预览（baton do，高亮为配置带来的参数）</div><pre class="cmd">${argv(f.agent, C.draft)}</pre></div>`;
+    else if (f.key === "agent") html += `<div class="sec"><div class="sec-h">效果</div><pre class="cmd">baton do 给用户列表 API 加分页  → <span class="hl">${esc(v || "codex")}</span></pre></div>`;
+    const saved = new Set(keyed(toJSON(C.saved)));
+    html += `<div class="sec"><div class="sec-h">保存后的 config.json</div><pre class="json">${keyed(toJSON(C.draft)).map((l) => `<div${saved.has(l) ? "" : ' class="add"'}>${esc(l.slice(l.indexOf("|") + 1))}</div>`).join("")}</pre></div>`;
+    return html + `</div>`;
+  }
+
+  function settingsFoot() {
+    if (C.confirm) return `<span>设置有 <b>${changed().length} 项未保存</b>，再按 q 放弃并退出，其他键返回</span>`;
+    const keys = C.editing ? [["enter", "确定"], ["esc", "取消"]]
+      : [["↑↓", "选择"], ["←→", "切换"], ["enter", "输入"], ["d", "默认"], ["u", "撤销"], ["ctrl+s", "保存"], ["[ ]", "比例"], ["esc", "返回对话"]];
+    return keys.map(([k, v]) => `<span class="key"><kbd>${k}</kbd>${v}</span>`).join("") + `<span class="right">${S.notice || `列表 ${S.ratio}% · 说明 ${100 - S.ratio}%`}</span>`;
+  }
+
+  function cycle(dir) {
+    const f = fields[C.cur];
+    if (!f.options) { flash("这一项按 enter 输入"); return; }
+    const i = Math.max(0, f.options.indexOf(f.get(C.draft)));
+    f.set(C.draft, f.options[(i + dir + f.options.length) % f.options.length]);
+  }
+
+  function saveSettings() {
+    if (!changed().length) { flash("没有改动"); return; }
+    const bad = invalid();
+    if (bad.length) { C.cur = fields.indexOf(bad[0]); flash(`✗ ${bad.length} 项有误，先改正再保存`); return; }
+    C.saved = clone(C.draft);
+    flash("✓ 已保存 · 下次派活生效，已有对话不变");
+  }
+
+  function leaveSettings() {
+    S.mode = "tasks"; C.editing = false;
+    if (changed().length) flash(`设置有 ${changed().length} 项未保存，按 s 回去保存`);
+  }
+
+  function settingsKey(ev) {
+    const key = (ev.ctrlKey || ev.metaKey ? "ctrl+" : "") + ev.key;
+    const f = fields[C.cur];
+    if (C.editing) {
+      if (key === "Enter") { f.set(C.draft, C.input.trim()); C.editing = false; }
+      else if (key === "Escape") C.editing = false;
+      else if (key === "Backspace") C.input = C.input.slice(0, -1);
+      else if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey) C.input += ev.key;
+      else return;
+    } else if (C.confirm) {
+      C.confirm = false;
+      if (key === "q") { C.draft = clone(C.saved); flash("（演示）已放弃改动并退出"); }
+    } else {
+      const up = () => { C.cur = (C.cur + fields.length - 1) % fields.length; };
+      const down = () => { C.cur = (C.cur + 1) % fields.length; };
+      const map = {
+        ArrowUp: up, k: up, ArrowDown: down, j: down,
+        ArrowLeft: () => cycle(-1), h: () => cycle(-1), ArrowRight: () => cycle(1), l: () => cycle(1),
+        Enter: () => { C.editing = true; C.input = f.get(C.draft); },
+        d: () => f.set(C.draft, ""), u: () => f.set(C.draft, f.get(C.saved)),
+        "ctrl+s": saveSettings,
+        PageUp: () => { $("detail").scrollTop -= 200; }, PageDown: () => { $("detail").scrollTop += 200; },
+        "[": () => setRatio(S.ratio - 5), "]": () => setRatio(S.ratio + 5), "=": () => setRatio(38),
+        Escape: leaveSettings, s: leaveSettings,
+        q: () => { if (changed().length) C.confirm = true; else flash("演示中 q 不会退出"); },
+      };
+      if (!map[key]) return;
+      map[key]();
+    }
+    ev.preventDefault();
+    render();
+  }
+
   function renderHead() {
     const n = (st) => tasks.filter((t) => t.status === st).length;
     $("head").innerHTML = `<span class="brand">Baton</span>
@@ -338,10 +561,16 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       <span class="count st-queued">◌ <b>${n("queued")}</b> 排队</span>
       <span class="count st-failed">✗ <b>${n("failed")}</b> 失败</span>
       <span class="count st-succeeded">✓ <b>${n("succeeded")}</b> 完成</span>
-      <span class="right">~/.local/share/baton · ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}</span>`;
+      ${changed().length ? `<span class="count changed">● <b>${changed().length}</b> 项设置未保存</span>` : ""}
+      <span class="right">${S.mode === "settings" ? `设置 · ${CFG_PATH}` : "~/.local/share/baton"} · ${new Date().toLocaleTimeString("zh-CN", { hour12: false })}</span>`;
   }
 
   function renderList() {
+    if (S.mode === "settings") {
+      $("list").innerHTML = settingsList();
+      $("list").querySelector(".sel")?.scrollIntoView({ block: "nearest" });
+      return;
+    }
     let html = "";
     for (const [name, sts] of GROUPS) {
       const items = tasks.filter((t) => sts.includes(t.status));
@@ -420,6 +649,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
   }
 
   function renderDetail() {
+    if (S.mode === "settings") { $("detail").innerHTML = settingsDetail(); return; }
     const t = sel();
     const tabs = ["对话", "事件", "改动", "检查"];
     const body = [convView, eventsView, diffView, checksView][S.tab](t);
@@ -431,13 +661,18 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
   }
 
   function renderFoot() {
+    if (S.mode === "settings") {
+      $("foot").className = C.confirm ? "t-foot confirm" : "t-foot";
+      $("foot").innerHTML = settingsFoot();
+      return;
+    }
     if (S.confirm) {
       $("foot").className = "t-foot confirm";
       $("foot").innerHTML = `<span>取消 <b>「${esc(sel().title)}」</b>？</span><span class="key"><kbd>y</kbd> 确认</span><span class="key"><kbd>esc</kbd> 返回</span>`;
       return;
     }
     $("foot").className = "t-foot";
-    const keys = [["↑↓", "选择"], ["tab", "切焦点"], ["1-4", "标签"], ["[ ]", "比例"], ["z", S.zoom ? "退出专注" : "专注"], ["e", "工具调用"], ["c", "取消"], ["q", "退出"]];
+    const keys = [["↑↓", "选择"], ["tab", "切焦点"], ["1-4", "标签"], ["[ ]", "比例"], ["z", S.zoom ? "退出专注" : "专注"], ["e", "工具调用"], ["c", "取消"], ["s", "设置"], ["q", "退出"]];
     $("foot").innerHTML = keys.map(([k, v]) => `<span class="key"><kbd>${k}</kbd>${v}</span>`).join("") +
       `<span class="right">${S.notice || `列表 ${S.ratio}% · 详情 ${100 - S.ratio}%`}</span>`;
   }
@@ -446,9 +681,12 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
     const narrow = matchMedia("(max-width: 760px)").matches;
     $("listPane").style.width = narrow ? "" : `${S.ratio}%`;
     $("listPane").style.height = narrow ? `${S.ratio}%` : "";
-    $("body").classList.toggle("zoomed", S.zoom);
-    $("listPane").classList.toggle("focused", S.focus === "list" && !S.zoom);
-    $("detailPane").classList.toggle("focused", S.focus === "detail" || S.zoom);
+    const settings = S.mode === "settings";
+    $("listTitle").textContent = settings ? "设置" : "对话";
+    $("detailTitle").textContent = settings ? "说明" : "详情";
+    $("body").classList.toggle("zoomed", S.zoom && !settings);
+    $("listPane").classList.toggle("focused", settings || (S.focus === "list" && !S.zoom));
+    $("detailPane").classList.toggle("focused", !settings && (S.focus === "detail" || S.zoom));
   }
 
   function render() { renderHead(); renderList(); renderDetail(); renderFoot(); applyLayout(); }
@@ -475,6 +713,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       if (k === "y") { const t = sel(); t.dur = elapsedText(t); t.status = "canceled"; t.total = t.dur; t.conv.push({ agent: true, meta: `第 ${t.turn} 轮 · 已取消`, tools: t.events.length, md: `<p class="dim">任务在回复前被取消。</p>` }); flash("已取消"); }
       S.confirm = false; render(); return;
     }
+    if (S.mode === "settings") { settingsKey(ev); return; }
     const map = {
       ArrowUp: () => S.focus === "list" || S.zoom ? move(-1) : ($("detail").scrollTop -= 40),
       k: () => S.focus === "list" ? move(-1) : ($("detail").scrollTop -= 40),
@@ -485,7 +724,8 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       z: () => { S.zoom = !S.zoom; render(); },
       e: () => { S.expand = !S.expand; renderDetail(); },
       c: () => { if (["running", "queued"].includes(sel().status)) { S.confirm = true; renderFoot(); } else flash("只有运行中或排队的任务可以取消"); },
-      q: () => flash("演示中 q 不会退出"),
+      s: () => { S.mode = "settings"; $("detail").scrollTop = 0; render(); },
+      q: () => { if (changed().length) { S.mode = "settings"; C.confirm = true; render(); } else flash("演示中 q 不会退出"); },
     };
     if (/^[1-4]$/.test(k)) { ev.preventDefault(); S.tab = Number(k) - 1; renderDetail(); return; }
     if (map[k]) { ev.preventDefault(); map[k](); }
@@ -494,10 +734,21 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
   $("term").addEventListener("focus", () => { $("hint").textContent = "键盘已就绪"; });
   $("term").addEventListener("blur", () => { $("hint").textContent = "点击此处后可用键盘"; });
   $("list").addEventListener("click", (ev) => {
+    const row = ev.target.closest(".field");
+    if (row && !C.editing) { C.cur = Number(row.dataset.i); render(); $("term").focus(); return; }
     const b = ev.target.closest(".item"); if (!b) return;
     S.selId = b.dataset.id; S.focus = "list"; S.expand = false; $("detail").scrollTop = 0; render(); $("term").focus();
   });
+  $("list").addEventListener("dblclick", (ev) => {
+    if (S.mode === "settings" && ev.target.closest(".field")) { C.editing = true; C.input = fields[C.cur].get(C.draft); render(); }
+  });
+  $("term").addEventListener("paste", (ev) => {
+    if (S.mode !== "settings" || !C.editing) return;
+    C.input += ev.clipboardData.getData("text").replace(/\s+/g, " ");
+    ev.preventDefault(); render();
+  });
   $("detail").addEventListener("click", (ev) => {
+    if (S.mode === "settings") { $("term").focus(); return; }
     const b = ev.target.closest(".tab"); S.focus = "detail"; applyLayout();
     if (b) { S.tab = Number(b.dataset.tab); renderDetail(); }
     $("term").focus();

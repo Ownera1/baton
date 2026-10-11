@@ -15,11 +15,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-func Run(svc *app.Service, theme string) error {
+// Run opens the panel; settings opens it on the config fields (baton config).
+func Run(svc *app.Service, theme string, settings bool) error {
 	if theme != "auto" && theme != "light" && theme != "dark" {
 		return fmt.Errorf("theme must be auto, light or dark")
 	}
-	_, err := tea.NewProgram(newModel(svc, theme), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+	m := newModel(svc, theme)
+	if settings {
+		m = m.enterSettings()
+	}
+	_, err := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
 
@@ -47,6 +52,8 @@ type model struct {
 	cancelTitle   string
 	notice        string
 	noticeUntil   time.Time
+	settingsMode  bool
+	set           settings
 }
 
 type logKey struct {
@@ -264,6 +271,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft && separator {
 			m.dragging = true
 		}
+		pane, row := m.hit(msg.X, msg.Y)
+		wheel := msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown
 		if m.dragging {
 			if msg.Action == tea.MouseActionMotion {
 				if m.width >= 100 {
@@ -276,8 +285,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.dragging = false
 				m.saveRatio()
 			}
-		} else if m.detail || m.zoom {
+		} else if pane == 'd' && wheel {
 			m.viewport, _ = m.viewport.Update(msg)
+		} else if pane == 'l' && wheel && msg.Action == tea.MouseActionPress {
+			d := 1
+			if msg.Button == tea.MouseButtonWheelUp {
+				d = -1
+			}
+			if m.settingsMode {
+				m.moveField(d)
+			} else if cmd := m.selectTask(m.selected + d); cmd != nil {
+				return m, cmd
+			}
+		} else if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			if cmd := m.click(pane, row, msg.X); cmd != nil {
+				return m, cmd
+			}
 		}
 	case tea.KeyMsg:
 		key := msg.String()
@@ -292,9 +315,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.settingsMode {
+			return m.settingsKey(msg)
+		}
 		switch key {
 		case "q", "ctrl+c":
+			if key == "q" && m.set.changed() > 0 {
+				m = m.enterSettings()
+				m.set.quit = true
+				break
+			}
 			return m, tea.Quit
+		case "s":
+			m = m.enterSettings()
 		case "[", "]", "=":
 			ratio := 38
 			if key == "[" {
@@ -318,18 +351,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cancelID, m.cancelTitle = t.ID, taskTitle(t)
 			}
 		case "up", "k", "down", "j":
-			if !m.detail && !m.zoom && len(m.tasks) > 0 {
-				i := m.selected
+			if !m.detail && !m.zoom {
+				d := 1
 				if key == "up" || key == "k" {
-					m.selected = max(0, i-1)
-				} else {
-					m.selected = min(len(m.tasks)-1, i+1)
+					d = -1
 				}
-				if i != m.selected {
-					m.viewport.GotoTop()
-					m.expand = false
-					m.syncViewport()
-					return m, m.readEvents()
+				if cmd := m.selectTask(m.selected + d); cmd != nil {
+					return m, cmd
 				}
 			} else {
 				m.viewport, _ = m.viewport.Update(msg)
@@ -342,6 +370,85 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	m.syncViewport()
 	return m, nil
+}
+
+// selectTask selects task i and reads its events; nil when nothing changed.
+func (m *model) selectTask(i int) tea.Cmd {
+	i = max(0, min(len(m.tasks)-1, i))
+	if len(m.tasks) == 0 || i == m.selected {
+		return nil
+	}
+	m.selected = i
+	m.viewport.GotoTop()
+	m.expand = false
+	m.syncViewport()
+	return m.readEvents()
+}
+
+// hit maps a cell to its pane ('l' list, 'd' detail, 0 elsewhere) and the
+// row within the pane body; -1 is the pane title.
+func (m model) hit(x, y int) (byte, int) {
+	lw, lh, _, _ := m.layout()
+	switch {
+	case y < 1 || y >= m.height-1:
+		return 0, 0
+	case m.zoom:
+		return 'd', y - 2
+	case m.width >= 100 && x < lw, m.width < 100 && y <= lh:
+		return 'l', y - 2
+	case m.width >= 100 && x > lw:
+		return 'd', y - 2
+	case m.width < 100 && y > lh+1:
+		return 'd', y - lh - 3
+	}
+	return 0, 0
+}
+
+// click focuses the pane under the pointer and acts on what it hits: a task,
+// a settings field or a detail tab label.
+func (m *model) click(pane byte, row, x int) tea.Cmd {
+	lw, lh, _, _ := m.layout()
+	switch pane {
+	case 'l':
+		if m.set.editing && m.settingsMode {
+			return nil
+		}
+		m.detail = false
+		_, owners, selected := m.listLines(lw)
+		i := listStart(selected, max(1, lh-1)) + row
+		if row < 0 || i >= len(owners) || owners[i] < 0 {
+			return nil
+		}
+		if m.settingsMode {
+			m.set.cursor = owners[i]
+			m.viewport.GotoTop()
+			return nil
+		}
+		return m.selectTask(owners[i])
+	case 'd':
+		if m.settingsMode {
+			return nil
+		}
+		m.detail = true
+		if row < 0 || m.viewport.YOffset+row != m.tabRow() {
+			return nil
+		}
+		cx := x - 1 // panes indent their body by one cell
+		if m.width >= 100 && !m.zoom {
+			cx = x - lw - 2
+		}
+		at := 0
+		for i, name := range tabs {
+			width := lipgloss.Width(fmt.Sprintf("%d %s", i+1, name))
+			if cx >= at && cx < at+width {
+				m.tab = i
+				m.viewport.GotoTop()
+				return nil
+			}
+			at += width + 2
+		}
+	}
+	return nil
 }
 
 func (m *model) setRatio(ratio int) { m.ratio = max(20, min(70, ratio)) }
