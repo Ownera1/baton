@@ -236,6 +236,52 @@ printf 'raw stderr\n' >&2
 	if patch, err := os.ReadFile(task.PatchPath); err != nil || !bytes.Contains(patch, []byte("agent.pid")) {
 		t.Fatalf("canceled turn patch: %s %v", patch, err)
 	}
+	held := task // the canceled codex task, checked over MCP below
+	// Roles: global and repository files, instructions before turn 1 only, mode as a constraint.
+	roles := map[string]string{
+		filepath.Join(dir, "agents", "tester.md"):              "---\ndescription: global tester\n---\nGLOBAL-RULES\n",
+		filepath.Join(repo, ".baton", "agents", "tester.md"):   "---\ndescription: writes tests\nmodel: role-model\nmode: write\n---\nTESTER-RULES\n",
+		filepath.Join(repo, ".baton", "agents", "reviewer.md"): "---\ndescription: reviews\nmode: read\n---\nREVIEW-RULES\n",
+		filepath.Join(repo, ".baton", "agents", "secret.md"):   "---\ndescription: hidden role\nhidden: true\n---\n",
+	}
+	for path, body := range roles {
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{{"add", ".baton"}, {"commit", "-m", "roles"}} {
+		if _, err := workspace.Git(repo, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cli(&submitted, "do", "tester", "ROLE-TASK", "-repo", repo, "-no-check", "-timeout", "20s")
+	cli(&task, "wait", submitted.ID, "-timeout", "20s")
+	if task.Status != "succeeded" || task.Role != "tester" || task.Agent != "codex" || task.Model != "role-model" || task.Instructions != "TESTER-RULES" || task.Turns[0].Prompt != "ROLE-TASK" || task.Title != "ROLE-TASK" {
+		t.Fatalf("role task: %+v", task)
+	}
+	cli(&submitted, "reply", submitted.ID, "ROLE-REPLY", "-timeout", "20s")
+	cli(&task, "wait", submitted.ID, "-timeout", "20s")
+	log, err = os.ReadFile(argvLog)
+	if err != nil || bytes.Count(log, []byte("TESTER-RULES")) != 1 || bytes.Contains(log, []byte("GLOBAL-RULES")) || !bytes.Contains(log, []byte("TESTER-RULES\n\n---\n\nROLE-TASK")) {
+		t.Fatalf("role instructions: %q %v", log, err)
+	}
+	if out, err := exec.Command(bin, "do", "reviewer", "fix it", "-repo", repo).CombinedOutput(); err == nil || !strings.Contains(string(out), "only runs in read mode") {
+		t.Fatalf("write to read-only role: %s %v", out, err)
+	}
+	cli(&submitted, "run", "-agent", "reviewer", "-repo", repo, "-task", "look", "-timeout", "20s")
+	cli(&task, "wait", submitted.ID, "-timeout", "20s")
+	if task.Status != "succeeded" || task.Mode != "read" || task.Role != "reviewer" {
+		t.Fatalf("role mode default: %+v", task)
+	}
+	var listed app.AgentList
+	cli(&listed, "agents", "-repo", repo)
+	if len(listed.Agents) != 8 || listed.Agents[5].Name != "reviewer" || listed.Agents[5].Mode != "read" || listed.Agents[6].Name != "secret" || !listed.Agents[6].Hidden {
+		t.Fatalf("baton agents: %+v", listed)
+	}
+
 	// Confirm MCP registration and parity using the same built CLI and store.
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -249,7 +295,7 @@ printf 'raw stderr\n' >&2
 	if err != nil || len(tools.Tools) != 8 {
 		t.Fatalf("MCP tools: %+v %v", tools, err)
 	}
-	out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_result", Arguments: map[string]any{"id": submitted.ID}})
+	out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_result", Arguments: map[string]any{"id": held.ID}})
 	if err != nil || out.IsError {
 		t.Fatalf("MCP result: %+v %v", out, err)
 	}
@@ -258,13 +304,13 @@ printf 'raw stderr\n' >&2
 		t.Fatal(err)
 	}
 	var mcpResult app.Result
-	if err := json.Unmarshal(b, &mcpResult); err != nil || mcpResult.ID != task.ID || mcpResult.Status != "canceled" {
+	if err := json.Unmarshal(b, &mcpResult); err != nil || mcpResult.ID != held.ID || mcpResult.Status != "canceled" {
 		t.Fatalf("MCP JSON: %s %v", b, err)
 	}
 	// Hidden agents are left out of baton_agents and refused over MCP only.
 	exposed := func() map[string]app.AgentInfo {
 		t.Helper()
-		out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_agents", Arguments: map[string]any{}})
+		out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_agents", Arguments: map[string]any{"repo": repo}})
 		if err != nil || out.IsError {
 			t.Fatalf("MCP agents: %+v %v", out, err)
 		}
@@ -279,7 +325,7 @@ printf 'raw stderr\n' >&2
 		}
 		return byName
 	}
-	if a := exposed()["codex"]; !a.Default || a.Model != "cfg-model" || a.Error != "" || len(exposed()) != 5 {
+	if a, r := exposed()["codex"], exposed()["tester"]; !a.Default || a.Model != "cfg-model" || a.Error != "" || len(exposed()) != 7 || r.Agent != "codex" || r.Model != "role-model" || r.Description != "writes tests" {
 		t.Fatalf("exposed agents: %+v", exposed())
 	}
 	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"agents":{"codex":{"model":"cfg-model","hidden":true}}}`), 0600); err != nil {
@@ -296,7 +342,13 @@ printf 'raw stderr\n' >&2
 		}
 	}
 	refused("baton_run", map[string]any{"repo": repo, "task": "default agent is hidden"})
-	refused("baton_reply", map[string]any{"id": submitted.ID, "msg": "continue"})
+	refused("baton_run", map[string]any{"repo": repo, "agent": "secret", "task": "hidden role"})
+	// A role may run on a hidden agent: hiding raw codex still allows the tester role.
+	out, err = conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_run", Arguments: map[string]any{"repo": repo, "agent": "tester", "task": "via role", "no_checks": true, "timeout": "20s"}})
+	if err != nil || out.IsError {
+		t.Fatalf("role on hidden agent: %+v %v", out, err)
+	}
+	refused("baton_reply", map[string]any{"id": held.ID, "msg": "continue"})
 	cli(&submitted, "ask", "codex", "hidden agents still work on the CLI", "-repo", repo, "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s")
 	if task.Status != "succeeded" {

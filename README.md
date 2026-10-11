@@ -20,13 +20,14 @@ git diff | baton ask 评审这段改动          # 任务文字也可以从管�
 baton reply 再补上边界处理                 # 继续最近一个任务的同一会话
 baton wait                                # 等最近一个任务；也可写 ID 后 8 位
 baton result 2fa5f633                     # 结果、分支、检查、diffstat、最终回复
+baton agents                              # 可派的 Agent 和角色
 baton config                              # 设置面板；管道或 -json 时打印各 Agent 实际用的模型、effort、可执行文件
 baton                                     # 打开面板（同 baton tui）
 ```
 
 | 默认值 | 说明 |
 |---|---|
-| Agent | `codex`；用配置的 `agent` 或 `BATON_AGENT` 改，或在任务前写 `claude`、`grok`、`agy`、`pi` |
+| Agent | `codex`；用配置的 `agent` 或 `BATON_AGENT` 改，或在任务前写 `claude`、`grok`、`agy`、`pi` 或[角色](#角色)名 |
 | 仓库 | 当前目录所在的 git 仓库；`-repo` 指定其他仓库。MCP 默认取服务启动目录 |
 | 模型 / effort | 配置的 `agents.<名字>`，没有就用各 Agent 自己的配置；`-model`、`-effort` 只在需要时覆盖 |
 | 检查（仅改代码任务） | 依次查找 `.baton/checks`（一行一条命令，`#` 注释，空文件表示不检查）、`go.mod`（`go vet` + `go test`）、`Cargo.toml`（`cargo test`）、Makefile 的 `test` 目标。npm 项目不自动推断：worktree 里没有 `node_modules`，请写进 `.baton/checks`。`-check` 指定后不再推断，`-no-check` 跳过检查 |
@@ -54,6 +55,24 @@ baton                                     # 打开面板（同 baton tui）
 优先级：命令行或 MCP 参数 > `BATON_AGENT`（仅 Agent）> 配置 > 内置默认。`effort` 原样传给 Agent（codex 为 `model_reasoning_effort`，pi 为 `--thinking`），取值以各 Agent 为准。`path` 写绝对路径或 PATH 里的命令名。配置在派活时读取，模型、effort、路径写入任务，`reply` 沿用，之后改配置不影响已有对话；MCP 每次派活重新读取，无需重启。未知字段、未知 Agent 名或无法解析的超时会直接报错，不会悄悄回退。`hidden: true` 让主 Agent 看不到这个 Agent：MCP 的 `baton_agents` 不列出，`baton_run`、`baton_reply`（包括没写 Agent 而落到默认值的情况）直接报错；状态、结果、取消不受影响，你在终端里用 CLI 也不受影响。
 
 在终端里运行 `baton config`，或在面板里按 `s`，左栏换成 23 项设置（全局 `agent`、`timeout`，面板 `theme`，每个 Agent 的 `model`、`effort`、`path`、`hidden`），右栏说明当前项：可选值、该 Agent 一次写任务的完整命令（配置带来的参数高亮）和保存后的文件（改动行标 `+`）。`←`/`→` 切换取值（effort 取值来自各 CLI 的 `--help`，grok 未列出只能输入），`enter` 输入任意值，`d` 恢复默认，`u` 撤销本项，`ctrl+s` 保存，`esc` 或 `s` 回到对话。空值即默认，灰色显示实际会用什么；`path` 找不到时提示但允许保存，校验不过的值标红且不能保存。保存先写临时文件再改名替换，权限 0600；打开后文件被外部改过则拒绝覆盖，按 `r` 重新读取。未保存的改动离开设置后仍保留，顶栏提示数量，按 `q` 退出前要再确认一次。
+
+### 角色
+
+角色是带固定说明的子 Agent，一个 Markdown 文件一个，文件名即角色名（小写字母、数字、`-`、`_`，不能和 Agent 重名）。仓库的 `.baton/agents/<名字>.md` 覆盖配置目录（默认 `~/.config/baton/`）下的 `agents/<名字>.md`。
+
+```markdown
+---
+description: 只读评审：找出改动里的 bug 和缺失的测试
+agent: claude
+model: opus
+mode: read
+---
+你是代码评审。只列出有证据的问题，每条给出文件和行号。
+```
+
+front matter 每行一个 `key: value`（值可加引号，`#` 开头为注释，空值即默认，不支持多行值和列表）：`description` 必填，主 Agent 靠它挑角色；`name` 可省略，写了须与文件名一致；`agent` 不写用默认 Agent；另有 `model`、`effort`、`mode`、`hidden`。未知字段直接报错，从 Claude Code 复制来的 `tools` 等字段要删掉。正文在第 1 轮放在任务前面，`reply` 不再重复；角色名和正文在派活时写入任务，之后改文件不影响已有对话。
+
+用法：`baton do tester 给分页补测试`、`baton ask reviewer 看看这次改动`，或 `-agent reviewer`；MCP 在 `agent` 里写角色名。命令行或 MCP 参数优先于角色。角色写了 `mode` 就只能以该模式运行（`baton do reviewer …` 报错），`run`/MCP 不写 `mode` 时取角色的值。`baton agents` 列出全部 Agent 和角色（含隐藏的和读取出错的），MCP 的 `baton_agents` 只列出未隐藏的。`hidden: true` 的角色对主 Agent 隐藏；角色可以使用被隐藏的 Agent，例如隐藏 `pi`，只暴露一个 `agent: pi`、`mode: read` 的角色。仓库级角色随仓库提交，克隆来的仓库也会带上，用之前先看一眼它的说明。
 
 参数可以写在任意位置；任务文字以 `-` 开头时放在 `--` 之后。输出默认给人看，加 `-json` 输出结构化结果。`-w` 等待完成并打印结果，任务失败时退出码非零；Ctrl-C 只停止等待，任务继续。`baton run -agent … -repo … -task …` 等旧写法继续可用。
 
@@ -109,7 +128,7 @@ bin/baton mcp
 }
 ```
 
-stdio 提供 `baton_agents`、`baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；reply 为 `id/msg/timeout`；`baton_agents` 无参数，列出未隐藏的 Agent 及其说明、配置的模型和 effort、是否默认，以及可执行文件缺失等派活会失败的原因；其余任务工具传 `id`。`id` 可写唯一前缀或后缀，留空表示最近一个任务。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
+stdio 提供 `baton_agents`、`baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；reply 为 `id/msg/timeout`；`baton_agents` 可传 `repo`（默认服务启动目录），列出未隐藏的 Agent 和角色及其说明、实际的 Agent、模型和 effort、角色限定的 mode、是否默认，以及可执行文件缺失、角色文件有误等派活会失败的原因；run 的 `agent` 也可写角色名；其余任务工具传 `id`。`id` 可写唯一前缀或后缀，留空表示最近一个任务。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
 
 数据默认保存在 `~/.local/share/baton`，可通过 `BATON_HOME` 修改。每个 `tasks/<id>/` 保存原子更新的 `task.json`、原样的 `turn-n.stdout/stderr`、Codex 的 `turn-n.last`、`patch.diff`、`checks/turn-n/` 和 `worker.log`。`request.json` 是启动/续接信箱，`lock` 串行保护同一任务，`worker.pid` 记录启动 PID，`cancel-n` 是取消标记；只有 worker 写 `task.json`。同一个 BATON_HOME 下的 `check-gate.lock` 跨进程串行运行所有检查。
 

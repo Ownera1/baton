@@ -155,7 +155,7 @@ func (m model) listLines(w int) ([]string, []int, int) {
 			tm := elapsed(t, m.now)
 			left := p.text(p.status(t.Status)).Render(m.glyph(t.Status)) + " " + p.text(p.ink).Bold(true).Render(fit(taskTitle(t), max(1, w-6-lipgloss.Width(tm))))
 			first := stripe + " " + rightRow(left, p.text(p.dim).Render(tm), max(1, w-3)) + " "
-			meta := fmt.Sprintf("%s · %s · 第 %d 轮 · %s", t.Agent, modeName(t.Mode), len(t.Turns), checkMeta(t))
+			meta := fmt.Sprintf("%s · %s · 第 %d 轮 · %s", t.Who(), modeName(t.Mode), len(t.Turns), checkMeta(t))
 			second := stripe + "   " + p.text(p.dim).Render(fit(meta, max(1, w-5))) + " "
 			style := p.text(p.ink).Background(bg)
 			lines = append(lines, paint(first, style, w), paint(second, style, w))
@@ -184,7 +184,7 @@ func (m model) summary(t *app.Task, w int) string {
 	if known {
 		cost = fmt.Sprintf("$%.6f", sum)
 	}
-	meta := fmt.Sprintf("%s · %s / %s · %s · %s · 成本 %s", t.Agent, value(t.Model), value(t.Effort), modeName(t.Mode), timing, cost)
+	meta := fmt.Sprintf("%s · %s / %s · %s · %s · 成本 %s", t.Who(), value(t.Model), value(t.Effort), modeName(t.Mode), timing, cost)
 	lines = append(lines, p.text(p.dim).Render(ansi.Wrap(clean(meta), w, "")))
 	chips := []string{p.text(p.dim).Render("检查")}
 	result := latestVerify(t)
@@ -295,7 +295,7 @@ func (m model) conversation(t *app.Task, w int) string {
 		}
 		fold := p.text(p.faint).Render(fmt.Sprintf("⋯ %d 个工具调用 · e 展开", tools))
 		if i == len(t.Turns)-1 && t.Status == "running" {
-			lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("%s · 第 %d 轮", t.Agent, turn.Number))+p.text(p.run).Render(" · "+m.glyph("running")+" 正在执行 "+elapsed(t, m.now)))
+			lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("%s · 第 %d 轮", t.Who(), turn.Number))+p.text(p.run).Render(" · "+m.glyph("running")+" 正在执行 "+elapsed(t, m.now)))
 			if m.expand {
 				lines = append(lines, m.eventRows(entry, w))
 			} else {
@@ -317,7 +317,7 @@ func (m model) conversation(t *app.Task, w int) string {
 					checks += " 通过"
 				}
 			}
-			lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("%s · 第 %d 轮 · %s · %s", t.Agent, turn.Number, turnElapsed(turn, m.now), checks)))
+			lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("%s · 第 %d 轮 · %s · %s", t.Who(), turn.Number, turnElapsed(turn, m.now), checks)))
 			if m.expand {
 				lines = append(lines, m.eventRows(entry, w))
 			} else {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"baton/internal/agent"
+	"cmp"
 	"errors"
 	"fmt"
 	"os"
@@ -102,13 +103,17 @@ var agentNotes = map[string]string{
 	"pi":     "pi. read: read, grep, find and ls; write: default tools with no sandbox, only the git worktree isolates changes.",
 }
 
-// AgentInfo is one sub-agent the main agent may dispatch to.
+// AgentInfo is one agent or role the main agent may dispatch to.
 type AgentInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
+	Agent       string `json:"agent,omitempty" jsonschema:"the agent a role runs on"`
 	Model       string `json:"model,omitempty"`
 	Effort      string `json:"effort,omitempty"`
+	Mode        string `json:"mode,omitempty" jsonschema:"the only mode a role runs in; empty allows read and write"`
+	Path        string `json:"path,omitempty" jsonschema:"the role's file"`
 	Default     bool   `json:"default,omitempty"`
+	Hidden      bool   `json:"hidden,omitempty"`
 	Error       string `json:"error,omitempty" jsonschema:"why dispatching to it would fail, such as a missing executable"`
 }
 
@@ -116,27 +121,42 @@ type AgentList struct {
 	Agents []AgentInfo `json:"agents"`
 }
 
-// Exposed lists the agents not hidden in the config, for baton_agents.
-func Exposed() (*AgentList, error) {
+// AgentsFor lists the agents, then the roles visible from dir; hidden ones
+// only with all.
+func AgentsFor(dir string, all bool) (*AgentList, error) {
 	cfg, _, _, err := LoadConfig()
 	if err != nil {
 		return nil, err
 	}
 	out := &AgentList{Agents: []AgentInfo{}}
-	for _, name := range Agents {
-		ac := cfg.Agents[name]
-		if ac.Hidden {
-			continue
+	add := func(info AgentInfo, name string) {
+		if info.Hidden && !all {
+			return
 		}
-		info := AgentInfo{Name: name, Description: agentNotes[name], Model: ac.Model, Effort: ac.Effort, Default: name == cfg.DefaultAgent()}
-		if _, err := agent.Argv(name, agent.Options{Path: ac.Path}); err != nil {
-			info.Error = err.Error()
+		if info.Error == "" {
+			if _, err := agent.Argv(name, agent.Options{Path: cfg.Agents[name].Path}); err != nil {
+				info.Error = err.Error()
+			}
 		}
 		out.Agents = append(out.Agents, info)
+	}
+	for _, name := range Agents {
+		ac := cfg.Agents[name]
+		add(AgentInfo{Name: name, Description: agentNotes[name], Model: ac.Model, Effort: ac.Effort,
+			Default: name == cfg.DefaultAgent(), Hidden: ac.Hidden}, name)
+	}
+	for _, r := range Roles(dir) {
+		name := cmp.Or(r.Agent, cfg.DefaultAgent())
+		info := AgentInfo{Name: r.Name, Description: r.Description, Agent: name, Model: cmp.Or(r.Model, cfg.Agents[name].Model),
+			Effort: cmp.Or(r.Effort, cfg.Agents[name].Effort), Mode: r.Mode, Path: r.Path, Hidden: r.Hidden}
+		if r.Err != nil {
+			info.Error = r.Err.Error()
+		}
+		add(info, name)
 	}
 	return out, nil
 }
 
 func hidden(name string) error {
-	return fmt.Errorf("agent %s is hidden from the main agent (agents.%s.hidden in the Baton config); call baton_agents for the agents you may use", name, name)
+	return fmt.Errorf("%s is hidden from the main agent; call baton_agents for the agents and roles you may use", name)
 }

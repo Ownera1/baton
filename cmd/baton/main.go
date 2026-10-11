@@ -23,10 +23,11 @@ var version = "dev"
 
 const usage = `用法：
   baton                          打开面板（同 baton tui）
-  baton do [agent] <任务>         派出改代码的任务，默认 codex（可在配置中修改）
-  baton ask [agent] <问题>        派出只读任务
+  baton do [agent|角色] <任务>    派出改代码的任务，默认 codex（可在配置中修改）
+  baton ask [agent|角色] <问题>   派出只读任务
   baton reply [任务] <消息>       在同一会话里继续
   baton wait|result|status|cancel [任务]
+  baton agents                   列出 Agent 和角色（.baton/agents/、~/.config/baton/agents/ 下的 *.md）
   baton list | tui | mcp | version
   baton config                   终端里打开设置面板；管道或 -json 时打印配置
 
@@ -72,9 +73,16 @@ func parse(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// splitAgent takes a leading agent name when more text follows it.
-func splitAgent(pos []string) (string, []string) {
-	if len(pos) >= 2 && slices.Contains(app.Agents, pos[0]) {
+// splitAgent takes a leading agent or role name when more text follows it.
+func splitAgent(pos []string, repo string) (string, []string) {
+	if len(pos) < 2 {
+		return "", pos
+	}
+	names := slices.Clone(app.Agents)
+	for _, r := range app.Roles(repo) {
+		names = append(names, r.Name)
+	}
+	if slices.Contains(names, pos[0]) {
 		return pos[0], pos[1:]
 	}
 	return "", pos
@@ -138,7 +146,7 @@ func run(args []string) error {
 	case "do", "ask", "run":
 		var req app.RunRequest
 		var commands checks
-		fs.StringVar(&req.Agent, "agent", "", "codex|claude|grok|agy|pi (default: BATON_AGENT, config, then codex)")
+		fs.StringVar(&req.Agent, "agent", "", "codex|claude|grok|agy|pi or a role (default: BATON_AGENT, config, then codex)")
 		fs.StringVar(&req.Repo, "repo", "", "git repository (default: current directory)")
 		fs.StringVar(&req.Task, "task", "", "text or @file")
 		fs.StringVar(&req.Title, "title", "", "conversation title (inferred from task when omitted)")
@@ -150,13 +158,13 @@ func run(args []string) error {
 		wait := fs.Bool("w", false, "wait for the task and print its result")
 		req.Mode = map[string]string{"do": "write", "ask": "read"}[cmd]
 		if cmd == "run" {
-			fs.StringVar(&req.Mode, "mode", "write", "read|write")
+			fs.StringVar(&req.Mode, "mode", "", "read|write (default: the role's mode, then write)")
 		}
 		pos, err := parse(fs, args[1:])
 		if err != nil {
 			return err
 		}
-		agent, pos := splitAgent(pos)
+		agent, pos := splitAgent(pos, cmp.Or(req.Repo, "."))
 		if req.Agent == "" {
 			req.Agent = agent
 		} else if agent != "" {
@@ -262,6 +270,41 @@ func run(args []string) error {
 			return tui.Run(svc, *theme, true)
 		}
 		return printConfig(*asJSON)
+	case "agents":
+		repo := fs.String("repo", "", "git repository whose roles to include (default: current directory)")
+		if _, err := parse(fs, args[1:]); err != nil {
+			return err
+		}
+		list, err := app.AgentsFor(cmp.Or(*repo, "."), true)
+		if err != nil || *asJSON {
+			return orEmit(list, err)
+		}
+		for _, a := range list.Agents {
+			var parts []string
+			if a.Agent != "" {
+				parts = append(parts, "角色 → "+a.Agent)
+			}
+			if a.Mode != "" {
+				parts = append(parts, "只"+modes[a.Mode])
+			}
+			if a.Model != "" || a.Effort != "" {
+				parts = append(parts, cmp.Or(a.Model, "默认模型")+" / "+cmp.Or(a.Effort, "默认 effort"))
+			}
+			if a.Default {
+				parts = append(parts, "默认")
+			}
+			if a.Hidden {
+				parts = append(parts, "对主 Agent 隐藏")
+			}
+			if a.Description != "" {
+				parts = append(parts, a.Description)
+			}
+			if a.Error != "" {
+				parts = append(parts, "✗ "+a.Error)
+			}
+			fmt.Printf("%-10s %s\n", a.Name, strings.Join(parts, " · "))
+		}
+		return nil
 	case "list", "ls":
 		if _, err := parse(fs, args[1:]); err != nil {
 			return err
@@ -342,7 +385,7 @@ func title(t *app.Task) string {
 
 // line is one row: short id, status, title, agent, mode, turns, repo.
 func line(t *app.Task) string {
-	return fmt.Sprintf("%s %s %s · %s · %s · %s · 第 %d 轮 · %s", short(t.ID), glyphs[t.Status], t.Status, title(t), t.Agent, modes[t.Mode], len(t.Turns), filepath.Base(t.Repo))
+	return fmt.Sprintf("%s %s %s · %s · %s · %s · 第 %d 轮 · %s", short(t.ID), glyphs[t.Status], t.Status, title(t), t.Who(), modes[t.Mode], len(t.Turns), filepath.Base(t.Repo))
 }
 
 func printResult(r *app.Result) {

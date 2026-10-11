@@ -20,36 +20,39 @@ type Turn struct {
 }
 
 type Task struct {
-	ID         string        `json:"id"`
-	Title      string        `json:"title,omitempty"`
-	Agent      string        `json:"agent"`
-	AgentPath  string        `json:"agent_path,omitempty"` // configured executable; empty means PATH lookup
-	Mode       string        `json:"mode"`
-	Repo       string        `json:"repo"`
-	Worktree   string        `json:"worktree"`
-	Branch     string        `json:"branch"`
-	BaseCommit string        `json:"base_commit"`
-	Model      string        `json:"model,omitempty"`
-	Effort     string        `json:"effort,omitempty"`
-	Checks     []string      `json:"checks"`
-	Status     string        `json:"status"`
-	WorkerPID  int           `json:"worker_pid"`
-	SessionID  string        `json:"session_id"`
-	Turns      []Turn        `json:"turns"`
-	Verify     verify.Result `json:"verify"`
-	Diffstat   string        `json:"diffstat"`
-	PatchPath  string        `json:"patch_path"`
-	Warnings   []string      `json:"warnings,omitempty"`
-	CreatedAt  time.Time     `json:"created_at"`
-	UpdatedAt  time.Time     `json:"updated_at"`
+	ID    string `json:"id"`
+	Title string `json:"title,omitempty"`
+	Agent string `json:"agent"`
+	Role  string `json:"role,omitempty"`
+	// Instructions is the role's body when dispatched, put before turn 1.
+	Instructions string        `json:"instructions,omitempty"`
+	AgentPath    string        `json:"agent_path,omitempty"` // configured executable; empty means PATH lookup
+	Mode         string        `json:"mode"`
+	Repo         string        `json:"repo"`
+	Worktree     string        `json:"worktree"`
+	Branch       string        `json:"branch"`
+	BaseCommit   string        `json:"base_commit"`
+	Model        string        `json:"model,omitempty"`
+	Effort       string        `json:"effort,omitempty"`
+	Checks       []string      `json:"checks"`
+	Status       string        `json:"status"`
+	WorkerPID    int           `json:"worker_pid"`
+	SessionID    string        `json:"session_id"`
+	Turns        []Turn        `json:"turns"`
+	Verify       verify.Result `json:"verify"`
+	Diffstat     string        `json:"diffstat"`
+	PatchPath    string        `json:"patch_path"`
+	Warnings     []string      `json:"warnings,omitempty"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
 }
 
 type RunRequest struct {
 	Title  string   `json:"title,omitempty" jsonschema:"Conversation title supplied by the dispatching agent; inferred from task when omitted"`
-	Agent  string   `json:"agent,omitempty" jsonschema:"an agent listed by baton_agents; defaults to BATON_AGENT, the Baton config, then codex"`
+	Agent  string   `json:"agent,omitempty" jsonschema:"an agent or role listed by baton_agents; defaults to BATON_AGENT, the Baton config, then codex"`
 	Repo   string   `json:"repo,omitempty" jsonschema:"git repository; defaults to the current directory"`
 	Task   string   `json:"task"`
-	Mode   string   `json:"mode,omitempty"`
+	Mode   string   `json:"mode,omitempty" jsonschema:"read or write; defaults to the role's mode, then write"`
 	Model  string   `json:"model,omitempty"`
 	Effort string   `json:"effort,omitempty"`
 	Checks []string `json:"checks,omitempty" jsonschema:"check commands; omitted means detect from the project (.baton/checks, go.mod, Cargo.toml, Makefile test)"`
@@ -88,4 +91,12 @@ type request struct {
 	Prompt  string        `json:"prompt"`
 	Number  int           `json:"number"`
 	Timeout time.Duration `json:"timeout"`
+}
+
+// Who names the role and its agent, or just the agent.
+func (t *Task) Who() string {
+	if t.Role != "" {
+		return t.Role + "（" + t.Agent + "）"
+	}
+	return t.Agent
 }
