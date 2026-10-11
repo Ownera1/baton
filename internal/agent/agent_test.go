@@ -140,3 +140,16 @@ func TestArgvModesAndResume(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestCodexTransientErrorIsWarning(t *testing.T) {
+	out := "{\"type\":\"thread.started\",\"thread_id\":\"s\"}\n" +
+		"{\"type\":\"error\",\"message\":\"Reconnecting... 2/5 (stream disconnected before completion: tls handshake eof)\"}\n" +
+		"{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"done\"}}\n" +
+		"{\"type\":\"turn.completed\",\"usage\":{}}\n"
+	if r := Parse("codex", []byte(out), "", 0); r.Error != "" || r.FinalText != "done" || len(r.Warnings) != 1 {
+		t.Fatalf("reconnect before turn.completed must warn, not fail: %+v", r)
+	}
+	if r := Parse("codex", []byte("{\"type\":\"thread.started\",\"thread_id\":\"s\"}\n{\"type\":\"error\",\"message\":\"unauthorized\"}\n"), "", 1); r.Error == "" {
+		t.Fatal("an error without turn.completed must fail")
+	}
+}

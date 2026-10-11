@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 func codexArgv(o Options) []string {
@@ -37,6 +38,7 @@ func codexArgv(o Options) []string {
 func parseCodex(b []byte, last string) (Result, error) {
 	var r Result
 	done := false
+	var transient []string
 	err := jsonLines(b, func(raw json.RawMessage) error {
 		var e struct {
 			Type, Message string
@@ -57,8 +59,11 @@ func parseCodex(b []byte, last string) (Result, error) {
 			}
 		case "turn.completed":
 			r.Usage, done = e.Usage, true
-		case "turn.failed", "error":
+		case "turn.failed":
 			r.Error = fmt.Sprintf("%s: %s %s", e.Type, e.Message, e.Error)
+		case "error":
+			// Stream reconnects are reported as "error" while the turn goes on.
+			transient = append(transient, fmt.Sprintf("codex: %s %s", e.Message, e.Error))
 		}
 		return nil
 	})
@@ -67,6 +72,11 @@ func parseCodex(b []byte, last string) (Result, error) {
 	}
 	if r.FinalText == "" {
 		r.FinalText = last
+	}
+	if done {
+		r.Warnings = transient
+	} else if r.Error == "" && len(transient) > 0 {
+		r.Error = strings.Join(transient, "; ")
 	}
 	if r.Error != "" {
 		return r, nil
