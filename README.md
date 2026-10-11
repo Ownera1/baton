@@ -141,7 +141,7 @@ bin/baton mcp
 
 stdio 提供 `baton_agents`、`baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；`base`、`group` 见[接力](#接力)；`baton_list` 可传 `group`；reply 为 `id/msg/timeout`；`baton_wait` 另有 `ids`、`any`；`baton_agents` 可传 `repo`（默认服务启动目录），列出未隐藏的 Agent 和角色及其说明、实际的 Agent、模型和 effort、角色限定的 mode、是否默认，以及可执行文件缺失、角色文件有误等派活会失败的原因；run 的 `agent` 也可写角色名；其余任务工具传 `id`。`id` 可写唯一前缀或后缀，留空表示最近一个任务。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
 
-MCP 服务在连接时带上 instructions，告诉主 Agent 怎么分派：先用 `baton_agents` 挑 Agent 或角色；独立任务用同一个 `group` 并行派出，`baton_wait` 传 `ids` 和 `any` 先到先处理；同一任务派给两个 Agent 择优；写任务结束后用 `base` 派只读评审，问题用 `baton_reply` 退回原任务；用 `base` 接力或整合多个分支（让子 Agent `git merge baton/<id>`）；子 Agent 之间不直接通信，结果只经主 Agent 或 `base` 传递；最后告诉用户结果在哪个分支，合并由用户决定。例如让 Claude Code「给用户列表加分页，后端和前端分开做，做完评审再合到一起」，它大致会这样调用：
+MCP 服务在连接时带上 instructions，告诉主 Agent 怎么分派：先用 `baton_agents` 挑 Agent 或角色；独立任务用同一个 `group` 并行派出，`baton_wait` 传 `ids` 和 `any` 先到先处理；同一任务派给两个 Agent 择优；写任务结束后用 `base` 派只读评审，问题用 `baton_reply` 退回原任务；用 `base` 接力；子 Agent 合并不了分支，由主 Agent 审核每个分支（`baton_result` 的 patch 和检查，必要时加评审任务）后自己合并通过的 `baton/<id>`；遇到沙箱拒绝不能改派给沙箱更弱的 Agent（pi 的写模式没有沙箱）；子 Agent 之间不直接通信，结果只经主 Agent 或 `base` 传递。例如让 Claude Code「给用户列表加分页，后端和前端分开做，做完评审再合到一起」，它大致会这样调用：
 
 ```text
 baton_agents                                              → codex、claude、角色 reviewer（只读）
@@ -151,8 +151,9 @@ baton_wait {ids: [a1, b2], any: true}                     → a1 先完成
 baton_run {agent: reviewer, base: a1, task: 评审后端分页}     → 有一处越界
 baton_reply {id: a1, msg: 修复评审指出的越界…}
 baton_wait {ids: [a1, b2]}
-baton_run {base: a1, task: git merge baton/<b2 的 ID>，解决冲突并跑测试, group: paging} → c3
-→ 告诉用户：结果在 baton/<c3 的 ID>
+baton_result a1、baton_result b2                           → 主 Agent 审核两份 patch 和检查
+git merge baton/<a1 的 ID> baton/<b2 的 ID>                 → 主 Agent 用自己的 git 合并，冲突自己解决
+→ 告诉用户：合并了哪些分支，没合并的是哪个、为什么
 ```
 
 数据默认保存在 `~/.local/share/baton`，可通过 `BATON_HOME` 修改。每个 `tasks/<id>/` 保存原子更新的 `task.json`、原样的 `turn-n.stdout/stderr`、Codex 的 `turn-n.last`、`patch.diff`、`checks/turn-n/` 和 `worker.log`。`request.json` 是启动/续接信箱，`lock` 串行保护同一任务，`worker.pid` 记录启动 PID，`cancel-n` 是取消标记；只有 worker 写 `task.json`。同一个 BATON_HOME 下的 `check-gate.lock` 跨进程串行运行所有检查，配置了 `max_parallel` 时 `slots/<n>.lock` 限制同时运行的轮数。
