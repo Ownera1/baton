@@ -112,7 +112,17 @@ func (s *Service) Worker(id string) (retErr error) {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	runDir := t.Repo
+	runDir, hint := t.Repo, ""
+	if t.BaseTask != "" {
+		bt, err := s.Status(t.BaseTask)
+		if err != nil {
+			return err
+		}
+		if t.Mode == "read" {
+			runDir = bt.Worktree
+		}
+		hint = fmt.Sprintf("这里接着任务 %s（分支 %s）的结果，它的改动可用 git diff %s 查看。\n\n", bt.ID, bt.Branch, bt.BaseCommit)
+	}
 	if t.Mode == "write" {
 		runDir = t.Worktree
 		if req.Number == 1 {
@@ -120,7 +130,7 @@ func (s *Service) Worker(id string) (retErr error) {
 			if err != nil {
 				return err
 			}
-			if err := workspace.RequireClean(info); err != nil {
+			if err := workspace.RequireClean(info); err != nil && t.BaseTask == "" {
 				return err
 			}
 			if _, err := workspace.CreateWorktree(info, t.Worktree, t.Branch, t.BaseCommit); err != nil {
@@ -143,8 +153,11 @@ func (s *Service) Worker(id string) (retErr error) {
 	if t.Mode == "write" {
 		prefix = "你在隔离的 git worktree 里工作，不要 push，不要切换分支；结束时用几句话总结改了什么、怎么验证的。\n\n"
 	}
-	if req.Number == 1 && t.Instructions != "" {
-		prefix += t.Instructions + "\n\n---\n\n"
+	if req.Number == 1 {
+		prefix += hint
+		if t.Instructions != "" {
+			prefix += t.Instructions + "\n\n---\n\n"
+		}
 	}
 	lastFile := filepath.Join(dir, fmt.Sprintf("turn-%d.last", req.Number))
 	argv, err := agent.Argv(t.Agent, agent.Options{Path: t.AgentPath, Mode: t.Mode, Dir: runDir, Prompt: prefix + req.Prompt,

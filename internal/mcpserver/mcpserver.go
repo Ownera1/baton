@@ -21,6 +21,12 @@ func Serve(version string) error {
 	return srv.Run(context.Background(), &mcp.StdioTransport{})
 }
 
+// waited is one task, as before ids existed, or the tasks asked for by ids.
+type waited struct {
+	*app.Task
+	Tasks []*app.Task `json:"tasks,omitempty"`
+}
+
 type taskID struct {
 	ID string `json:"id,omitempty" jsonschema:"task id, unique prefix or suffix; empty means the newest task"`
 }
@@ -48,11 +54,13 @@ func register(srv *mcp.Server, svc *app.Service) {
 			out, err := svc.Status(id)
 			return nil, out, err
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "baton_wait", OutputSchema: map[string]any{"type": "object"}, Description: "Poll until terminal status or timeout. Default 120s, maximum 600s; timeout returns the current status."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_wait", OutputSchema: map[string]any{"type": "object"}, Description: "Poll until terminal status or timeout. Default 120s, maximum 600s; timeout returns the current status. With ids, wait for several tasks and return them in tasks; any returns as soon as one of them finishes, so you can act on it while the rest run."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in struct {
-			ID             string `json:"id"`
-			TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
-		}) (*mcp.CallToolResult, *app.Task, error) {
+			ID             string   `json:"id,omitempty" jsonschema:"task id, unique prefix or suffix; empty means the newest task"`
+			IDs            []string `json:"ids,omitempty" jsonschema:"several tasks to wait for instead of id"`
+			Any            bool     `json:"any,omitempty" jsonschema:"with ids, return when the first task finishes"`
+			TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
+		}) (*mcp.CallToolResult, *waited, error) {
 			n := in.TimeoutSeconds
 			if n == 0 {
 				n = 120
@@ -60,15 +68,29 @@ func register(srv *mcp.Server, svc *app.Service) {
 			if n < 0 || n > 600 {
 				return nil, nil, fmt.Errorf("timeout_seconds must be 1..600")
 			}
-			id, err := svc.Resolve(in.ID)
-			if err != nil {
-				return nil, nil, err
+			refs := in.IDs
+			if len(refs) == 0 {
+				refs = []string{in.ID}
 			}
-			out, err := svc.Wait(ctx, id, time.Duration(n)*time.Second)
+			ids := make([]string, len(refs))
+			for i, ref := range refs {
+				id, err := svc.Resolve(ref)
+				if err != nil {
+					return nil, nil, err
+				}
+				ids[i] = id
+			}
+			tasks, err := svc.WaitMany(ctx, ids, in.Any, time.Duration(n)*time.Second)
 			if err == context.DeadlineExceeded && ctx.Err() == nil {
 				err = nil
 			}
-			return nil, out, err
+			if err != nil {
+				return nil, nil, err
+			}
+			if len(in.IDs) == 0 {
+				return nil, &waited{Task: tasks[0]}, nil
+			}
+			return nil, &waited{Tasks: tasks}, nil
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "baton_result", OutputSchema: map[string]any{"type": "object"}, Description: "Read final reply, session, usage, cost, patch, branch and independently executed checks."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in taskID) (*mcp.CallToolResult, *app.Result, error) {
