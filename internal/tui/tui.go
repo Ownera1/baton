@@ -12,7 +12,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -66,7 +65,7 @@ type logSnapshot struct {
 	err    error
 }
 type markdownKey struct {
-	id, theme           string
+	kind, id, theme     string
 	turn, width, length int
 }
 type tickMsg time.Time
@@ -107,14 +106,6 @@ func newModel(svc *app.Service, themes ...string) model {
 	}
 	m.syncViewport()
 	return m
-}
-
-func renderMarkdown(text string, width int, theme string) (string, error) {
-	r, err := glamour.NewTermRenderer(glamour.WithStandardStyle(theme), glamour.WithWordWrap(width))
-	if err != nil {
-		return "", err
-	}
-	return r.Render(text)
 }
 
 func tick() tea.Cmd {

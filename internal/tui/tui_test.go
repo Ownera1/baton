@@ -296,7 +296,7 @@ func TestViewThemes(t *testing.T) {
 			m.syncViewport()
 			view := m.View()
 			plain := ansi.Strip(view)
-			for _, want := range []string{"Baton", m.now.Format("15:04:05"), "● 1 运行", "✗ 1 失败", "✓ 1 完成", "需要关注  1", "进行中  1", "已完成  1", "修复用户分页", "失败", "✗ go test", "◌ go vet", "改动 +1 −1 · 1 个文件", "1 对话", "2 事件", "3 改动", "4 检查", "↑↓ 选择", "tab 切焦点", "1-4 标签", "[ ] 比例", "z 专注", "e 工具调用", "c 取消", "q 退出", "列表 38% · 详情 62%", "cursor_test.go:42"} {
+			for _, want := range []string{"Baton", m.now.Format("15:04:05"), "● 1 运行", "✗ 1 失败", "✓ 1 完成", "需要关注  1", "进行中  1", "已完成  1", "修复用户分页", "失败", "✗ go test", "◌ go vet", "改动 +1 −1 · 1 个文件", "1 对话", "2 事件", "3 改动", "4 检查", "↑↓ 选择", "tab 切焦点", "1-4 标签", "[ ] 比例", "z 专注", "e 展开", "c 取消", "q 退出", "列表 38% · 详情 62%", "cursor_test.go:42"} {
 				if !strings.Contains(plain, want) {
 					t.Errorf("missing %q:\n%s", want, plain)
 				}
@@ -597,12 +597,13 @@ func TestMarkdownFramesUseCache(t *testing.T) {
 	calls := 0
 	m.render = func(text string, w int, theme string) (string, error) { calls++; return renderMarkdown(text, w, theme) }
 	m.syncViewport()
+	rendered := calls // two prompts and one reply
 	for i := 0; i < 10; i++ {
 		m, _ = update(m, spinMsg{})
 		_ = m.View()
 	}
-	if calls != 1 {
-		t.Fatal("frames rerendered markdown:", calls)
+	if rendered != 3 || calls != rendered {
+		t.Fatalf("markdown renders: %d initially, %d after 10 frames", rendered, calls)
 	}
 }
 
@@ -625,5 +626,44 @@ func TestSpinnerStopsWhenNothingRuns(t *testing.T) {
 	next, cmd := m.Update(spinMsg{})
 	if cmd != nil || next.(model).spinning {
 		t.Fatal("spinner must stop scheduling ticks when no task is running")
+	}
+}
+
+func TestMarkdownElements(t *testing.T) {
+	defer lipgloss.SetColorProfile(lipgloss.ColorProfile())
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	md := "## 二级标题\n\n用 `go test` 跑。\n\n- 一\n- 二\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```go\nfunc main() {\n\tfmt.Println(\"hi\")\n}\n```\n"
+	out, err := renderMarkdown(md, 60, "dark")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := ansi.Strip(out)
+	for _, want := range []string{"▌ 二级标题", "• 一", "│", " go", "    fmt.Println"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("missing %q in:\n%s", want, plain)
+		}
+	}
+	if strings.Contains(plain, "## ") || strings.Contains(plain, "```") || strings.Contains(plain, "BATONCODE") {
+		t.Errorf("raw markdown left in:\n%s", plain)
+	}
+	codeBG := "48;2;23;28;35" // dark --code #171c23
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(ansi.Strip(line), "fmt.Println") && !strings.Contains(line, codeBG) {
+			t.Errorf("code line without block background: %q", line)
+		}
+	}
+}
+
+func TestLongPromptFolds(t *testing.T) {
+	svc, task, _ := fixtureTask(t)
+	task.Turns[0].Prompt = strings.Repeat("一行\n\n", 30)
+	m := newModel(svc, "dark")
+	m.tasks = []*app.Task{task}
+	if got := m.prompt(task.ID, task.Turns[0], 60); !strings.Contains(got, "e 展开") {
+		t.Fatalf("long prompt not folded:\n%s", got)
+	}
+	m.expand = true
+	if got := m.prompt(task.ID, task.Turns[0], 60); strings.Contains(got, "e 展开") {
+		t.Fatal("expanded prompt still folded")
 	}
 }

@@ -248,7 +248,7 @@ func (m model) conversation(t *app.Task, w int) string {
 		if turn.StartedAt != nil {
 			clock = turn.StartedAt.Local().Format("15:04")
 		}
-		lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("你 · 第 %d 轮 · %s", turn.Number, clock)), p.text(p.dim).Render(ansi.Wrap(clean(turn.Prompt), w, "")), "")
+		lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("你 · 第 %d 轮 · %s", turn.Number, clock)), m.prompt(t.ID, turn, w), "")
 		entry := m.logs[logKey{t.ID, turn.Number}]
 		if entry.err != nil && !(i == len(t.Turns)-1 && t.Status == "running") {
 			lines = append(lines, p.text(p.bad).Render(ansi.Wrap("读取 stdout 失败: "+clean(entry.err.Error()), w, "")))
@@ -304,17 +304,41 @@ func (m model) conversation(t *app.Task, w int) string {
 	return strings.Join(lines, "\n")
 }
 func (m model) reply(id string, turn app.Turn, w int) string {
-	key := markdownKey{id: id, turn: turn.Number, width: w, theme: m.theme, length: len(turn.FinalText)}
+	return m.markdownText("reply", id, turn.Number, turn.FinalText, w)
+}
+
+// Long prompts (a whole task brief) fold so the replies stay in view.
+const promptLines = 12
+
+func (m model) prompt(id string, turn app.Turn, w int) string {
+	rendered := m.markdownText("prompt", id, turn.Number, turn.Prompt, w)
+	lines := strings.Split(rendered, "\n")
+	if m.expand || len(lines) <= promptLines {
+		return rendered
+	}
+	more := m.palette.text(m.palette.faint).Render(fmt.Sprintf("  ⋯ 还有 %d 行 · e 展开", len(lines)-promptLines))
+	return strings.Join(append(lines[:promptLines:promptLines], more), "\n")
+}
+
+func (m model) markdownText(kind, id string, turn int, text string, w int) string {
+	key := markdownKey{kind: kind, id: id, turn: turn, width: w, theme: m.theme, length: len(text)}
 	if rendered, ok := m.markdown[key]; ok {
 		return rendered
 	}
-	rendered, err := m.render(clean(turn.FinalText), w, m.theme)
+	// Tabs survive here: the renderer expands them so code keeps its indentation.
+	source := strings.Map(func(r rune) rune {
+		if r != '\n' && r != '\t' && unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, ansi.Strip(text))
+	rendered, err := m.render(source, w, m.theme)
 	if err != nil {
-		rendered = ansi.Wrap(clean(turn.FinalText), w, "")
+		rendered = ansi.Wrap(clean(text), w, "")
 	}
-	// Keep one rendering per task/turn rather than retaining every resize/frame.
+	// Keep one rendering per task/turn/kind rather than retaining every resize/frame.
 	for old := range m.markdown {
-		if old.id == id && old.turn == turn.Number {
+		if old.kind == kind && old.id == id && old.turn == turn {
 			delete(m.markdown, old)
 		}
 	}
@@ -532,7 +556,7 @@ func (m model) footer() string {
 		return p.text(p.bad).Background(p.badBG).Width(m.width).Render(fit("取消「"+m.cancelTitle+"」？ y 确认  esc 返回", m.width))
 	}
 	var keys []string
-	for _, kv := range [][2]string{{"↑↓", "选择"}, {"tab", "切焦点"}, {"1-4", "标签"}, {"[ ]", "比例"}, {"z", "专注"}, {"e", "工具调用"}, {"c", "取消"}, {"q", "退出"}} {
+	for _, kv := range [][2]string{{"↑↓", "选择"}, {"tab", "切焦点"}, {"1-4", "标签"}, {"[ ]", "比例"}, {"z", "专注"}, {"e", "展开"}, {"c", "取消"}, {"q", "退出"}} {
 		keys = append(keys, p.text(p.ink).Background(p.kbd).Bold(true).Render(kv[0])+" "+p.text(p.dim).Render(kv[1]))
 	}
 	right := fmt.Sprintf("列表 %d%% · 详情 %d%%", m.ratio, 100-m.ratio)
