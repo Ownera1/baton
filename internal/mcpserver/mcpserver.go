@@ -25,7 +25,7 @@ type taskID struct {
 }
 
 func register(srv *mcp.Server, svc *app.Service) {
-	mcp.AddTool(srv, &mcp.Tool{Name: "baton_run", Description: "Dispatch one task to an agent in a detached worker. Mode defaults to write; no planning or review."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_run", Description: "Dispatch one task to an agent in a detached worker. Pass the conversation title in title. Mode defaults to write; no planning or review."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in app.RunRequest) (*mcp.CallToolResult, *app.Submitted, error) {
 			out, err := svc.Run(in)
 			return nil, out, err

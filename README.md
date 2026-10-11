@@ -9,7 +9,7 @@ claude mcp add baton -- /opt/homebrew/bin/baton mcp   # 接入 Claude Code
 make build                  # bin/baton，Go 1.27.1；依赖已缓存时可离线构建
 make test                   # go vet ./... + go test -p 1 ./...
 
-bin/baton run -agent codex -repo /path/to/repo -task '实现这个功能' \
+bin/baton run -agent codex -repo /path/to/repo -task '实现这个功能' -title '实现用户分页' \
   -check 'go test ./...' -timeout 30m
 bin/baton status <id> -json
 bin/baton wait <id> -timeout 10m -json
@@ -17,12 +17,12 @@ bin/baton result <id> -json
 bin/baton reply <id> -msg '再补上边界处理' -timeout 30m
 bin/baton cancel <id>
 bin/baton list -json
-bin/baton tui                # 每秒刷新的任务面板
+bin/baton tui -theme auto    # auto|light|dark，每秒刷新数据
 
 bin/baton run -agent claude -repo /path/to/repo -mode read -task @question.txt
 ```
 
-`run`/`reply` 立即返回 `{ "id": "…", "status": "queued" }`。独立 session 中的 `_worker` 执行任务，关闭 CLI、终端或 MCP 连接不会取消任务。`-task` 和 `-msg` 支持文本或 `@文件`，`-check` 可以重复传入；`-model`/`-effort` 透传给 Agent。默认 `write`，单轮超时默认 30 分钟，包含 Agent 和检查时间。CLI `wait` 默认 10 分钟，等待超时输出当前 JSON 并以非零状态退出。
+`run`/`reply` 立即返回 `{ "id": "…", "status": "queued" }`。独立 session 中的 `_worker` 执行任务，关闭 CLI、终端或 MCP 连接不会取消任务。`-task` 和 `-msg` 支持文本或 `@文件`，`-check` 可以重复传入；`-model`/`-effort` 透传给 Agent。主 Agent 派活时应通过 `-title`（MCP 的 `title`）传入对话标题；未传时取任务的首个非空行，去掉行首 Markdown 标记及成对的反引号/粗体标记，按终端显示宽度缩到 40 列，超出加 `…`（中文占两列）。标题保存在任务中；旧任务只在显示时从第 1 轮 prompt 推导，不改旧文件。默认 `write`，单轮超时默认 30 分钟，包含 Agent 和检查时间。CLI `wait` 默认 10 分钟，等待超时输出当前 JSON 并以非零状态退出。
 
 | Agent | read | write | 续接 | 输出 |
 |---|---|---|---|---|
@@ -34,7 +34,21 @@ bin/baton run -agent claude -repo /path/to/repo -mode read -task @question.txt
 
 Pi 始终加 `-ne`，禁用用户扩展。Codex resume 没有 `-s`/`-C`，使用 `-c sandbox_mode="…"` 和工作目录保留原模式。可执行文件通过 `exec.LookPath` 查找并直接执行，忽略 shell alias；stdin 为 `/dev/null`。opencode 暂不支持。
 
-`baton tui` 读取当前 `BATON_HOME`，每秒刷新任务列表和选中任务最新一轮 stdout 的最后 40 条事件。宽屏左右分栏，窄屏上下堆叠；列表显示短 ID、Agent、模式、状态、轮数、当前轮耗时、检查状态和仓库名。详情包含 prompt、实时工具/消息/错误、最终回复、diffstat、检查退出码、警告和当前轮成本。`↑/↓` 或 `k/j` 选择任务；`tab` 切换列表/详情焦点，详情中用同样的方向键滚动，也支持 PgUp/PgDown；`c` 发起取消，必须再按 `y` 确认，其他键关闭确认；`q` 或 `ctrl+c` 退出。退出面板不会停止任务。除确认取消外，面板只读，不写任务文件。
+`baton tui -theme auto|light|dark` 读取当前 `BATON_HOME`，默认 `auto` 根据终端背景选择浅色或深色。左栏按需要关注、进行中、已完成分组，显示标题、耗时和检查进度；详情先显示状态摘要、检查标签、改动统计及失败诊断，再进入四个标签页：历轮对话（glamour Markdown）、最新轮全部事件、着色 `patch.diff`、检查及失败输出末尾最多 12 行。改动最多显示 2000 行，超过会标明截断；只读任务显示没有改动。新轮次会保存独立检查结果，旧轮次缺少记录时显示“检查结果未记录”。
+
+| 按键 | 行为 |
+|---|---|
+| `↑/↓`、`k/j` | 列表有焦点时选择任务，详情有焦点时滚动 |
+| `tab` | 切换列表/详情焦点 |
+| `PgUp/PgDn`、`home/end` | 详情翻页、到顶/到底 |
+| `1`–`4` | 对话、事件、改动、检查 |
+| `[` / `]`、`=` | 列表比例每次减/加 5%，范围 20–70%；复位到 38% |
+| `z` | 专注详情，再按恢复分栏 |
+| `e` | 展开/折叠各轮工具调用；运行中默认显示最近 4 条事件 |
+| `c`、`y` | 请求取消后确认；`esc` 或其他键关闭确认 |
+| `q`、`ctrl+c` | 退出面板，任务继续运行；确认取消期间只关闭确认 |
+
+分隔线支持鼠标拖动。宽度小于 100 列时上下堆叠，比例作用于高度。比例保存到 `$BATON_HOME/tui.json`（例如 `{"ratio":38}`），下次启动恢复；配置缺失、损坏或读写失败不影响运行。数据仍每秒刷新，braille 转圈每 100ms 重绘一次，不读取文件；stdout 大小不变时不再解析，Markdown 按任务、轮次、详情宽度、主题和回复长度缓存。窄终端会截短底栏提示和过长事件/改动行，方向键与快捷键仍可使用。除了确认取消和比例配置，面板不写任务文件。
 
 损坏或缺失的任务文件会显示读取错误并继续刷新；列表读取失败时保留上次成功的列表。未写完的 JSONL 行会暂时忽略，下一次刷新再解析。grok read 只开放三个只读工具，避免 plan 模式中的终端工具尝试取消整轮任务；write 的 auto + workspace sandbox 保持原样。
 
@@ -59,7 +73,7 @@ bin/baton mcp
 }
 ```
 
-stdio 提供 `baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 为 `agent/repo/task/mode/model/effort/checks/timeout`；reply 为 `id/msg/timeout`；其余任务工具传 `id`。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
+stdio 提供 `baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 为 `agent/repo/task/title/mode/model/effort/checks/timeout`；reply 为 `id/msg/timeout`；其余任务工具传 `id`。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
 
 数据默认保存在 `~/.local/share/baton`，可通过 `BATON_HOME` 修改。每个 `tasks/<id>/` 保存原子更新的 `task.json`、原样的 `turn-n.stdout/stderr`、Codex 的 `turn-n.last`、`patch.diff`、`checks/turn-n/` 和 `worker.log`。`request.json` 是启动/续接信箱，`lock` 串行保护同一任务，`worker.pid` 记录启动 PID，`cancel-n` 是取消标记；只有 worker 写 `task.json`。同一个 BATON_HOME 下的 `check-gate.lock` 跨进程串行运行所有检查。
 
