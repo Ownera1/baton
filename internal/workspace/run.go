@@ -191,6 +191,7 @@ func RunArgv(dir string, argv []string, stdin io.Reader, env []string, opts RunO
 	}
 
 	res.Duration = time.Since(start)
+	res.DurationMS = res.Duration.Milliseconds()
 	watch.halt()
 	// A final resource sample can arrive at the same time as process exit.
 	// Its refusal must still prevent a successful exit being labeled a pass.
