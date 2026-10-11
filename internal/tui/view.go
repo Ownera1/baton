@@ -104,12 +104,28 @@ func checkSummary(result verify.Result, total int) string {
 	return fmt.Sprintf("检查 %d/%d", passed, total)
 }
 
+// taskList shows the list pane's lines around the selection.
 func (m model) taskList(w, h int) string {
-	p := m.palette
-	if len(m.tasks) == 0 {
-		return p.text(p.dim).Render("暂无对话")
+	if len(m.tasks) == 0 && !m.settingsMode {
+		return m.palette.text(m.palette.dim).Render("暂无对话")
 	}
+	lines, _, selected := m.listLines(w)
+	start := listStart(selected, h)
+	return strings.Join(lines[start:min(len(lines), start+max(1, h))], "\n")
+}
+
+// listStart keeps the selected row, two lines tall for tasks, in view.
+func listStart(selected, h int) int { return max(0, selected+2-h) }
+
+// listLines returns the list pane's lines, the task or field index of each
+// line (-1 for headers) and the selected line.
+func (m model) listLines(w int) ([]string, []int, int) {
+	if m.settingsMode {
+		return m.settingsLines(w)
+	}
+	p := m.palette
 	var lines []string
+	var owners []int
 	selectedLine := 0
 	for group, name := range groupNames {
 		count := 0
@@ -122,6 +138,7 @@ func (m model) taskList(w, h int) string {
 			continue
 		}
 		lines = append(lines, p.text(p.faint).Render(fit(fmt.Sprintf(" %s  %d", name, count), w)))
+		owners = append(owners, -1)
 		for i, t := range m.tasks {
 			if taskGroup(t.Status) != group {
 				continue
@@ -142,10 +159,10 @@ func (m model) taskList(w, h int) string {
 			second := stripe + "   " + p.text(p.dim).Render(fit(meta, max(1, w-5))) + " "
 			style := p.text(p.ink).Background(bg)
 			lines = append(lines, paint(first, style, w), paint(second, style, w))
+			owners = append(owners, i, i)
 		}
 	}
-	start := max(0, selectedLine+2-h)
-	return strings.Join(lines[start:min(len(lines), start+max(1, h))], "\n")
+	return lines, owners, selectedLine
 }
 
 func (m model) summary(t *app.Task, w int) string {
@@ -195,11 +212,28 @@ func (m model) summary(t *app.Task, w int) string {
 			lines = append(lines, p.text(p.bad).Background(p.badBG).Width(w).Render(ansi.Wrap("✗ "+clean(alert), w, "")))
 		}
 	}
-	body := paint(strings.Join(lines, "\n"), p.text(p.ink).Background(p.sum), w)
-	return lipgloss.NewStyle().Border(lipgloss.Border{Left: "▎"}, false, false, false, true).BorderForeground(state).BorderBackground(p.sum).Render(body)
+	return p.box(strings.Join(lines, "\n"), state, w)
+}
+
+// box is the summary block: a tinted body with a colored left bar.
+func (p palette) box(body string, color lipgloss.Color, w int) string {
+	body = paint(body, p.text(p.ink).Background(p.sum), w)
+	return lipgloss.NewStyle().Border(lipgloss.Border{Left: "▎"}, false, false, false, true).BorderForeground(color).BorderBackground(p.sum).Render(body)
+}
+
+// tabRow is the details line holding the tab labels, for mouse hits.
+func (m model) tabRow() int {
+	t := m.task()
+	if t == nil || m.settingsMode {
+		return -1
+	}
+	return lipgloss.Height(m.summary(t, max(1, max(1, m.viewport.Width)-1))) + 1
 }
 
 func (m model) details() string {
+	if m.settingsMode {
+		return m.settingsDetail(max(1, m.viewport.Width))
+	}
 	t := m.task()
 	if t == nil {
 		return m.palette.text(m.palette.dim).Render("请选择对话")
@@ -510,10 +544,14 @@ func (m model) View() string {
 		}
 		return p.text(p.ink).Background(p.term).Width(w).Height(h).MaxWidth(w).MaxHeight(h).Render(p.text(color).Render(" "+title) + "\n" + body)
 	}
-	details := pane("详情", " "+strings.ReplaceAll(m.viewport.View(), "\n", "\n "), dw, dh, m.detail || m.zoom)
+	listTitle, detailTitle := "对话", "详情"
+	if m.settingsMode {
+		listTitle, detailTitle = "设置", "说明"
+	}
+	details := pane(detailTitle, " "+strings.ReplaceAll(m.viewport.View(), "\n", "\n "), dw, dh, !m.settingsMode && (m.detail || m.zoom))
 	body := details
 	if !m.zoom {
-		list := pane("对话", m.taskList(lw, max(1, lh-1)), lw, lh, !m.detail)
+		list := pane(listTitle, m.taskList(lw, max(1, lh-1)), lw, lh, m.settingsMode || !m.detail)
 		color := p.line
 		if m.dragging {
 			color = p.accent
@@ -535,7 +573,14 @@ func (m model) View() string {
 		}
 		left += p.text(p.status(status)).Render(fmt.Sprintf("  %s %d %s", []string{"●", "◌", "✗", "✓"}[i], n, []string{"运行", "排队", "失败", "完成"}[i]))
 	}
-	right := p.text(p.faint).Render(clean(m.svc.Home) + " · " + m.now.Format("15:04:05"))
+	if n := m.set.changed(); n > 0 {
+		left += p.text(p.wait).Render(fmt.Sprintf("  ● %d 项设置未保存", n))
+	}
+	where := m.svc.Home
+	if m.settingsMode {
+		where = "设置 · " + m.set.path
+	}
+	right := p.text(p.faint).Render(clean(where) + " · " + m.now.Format("15:04:05"))
 	header := left
 	if available := m.width - lipgloss.Width(left) - 1; available > 0 {
 		if lipgloss.Width(right) > available {
@@ -555,11 +600,22 @@ func (m model) footer() string {
 	if m.cancelID != "" {
 		return p.text(p.bad).Background(p.badBG).Width(m.width).Render(fit("取消「"+m.cancelTitle+"」？ y 确认  esc 返回", m.width))
 	}
+	if m.settingsMode && m.set.quit {
+		return p.text(p.bad).Background(p.badBG).Width(m.width).Render(fit(fmt.Sprintf("设置有 %d 项未保存，再按 q 放弃并退出，其他键返回", m.set.changed()), m.width))
+	}
+	pairs := [][2]string{{"↑↓", "选择"}, {"tab/点击", "切焦点"}, {"1-4", "标签"}, {"[ ]", "比例"}, {"z", "专注"}, {"e", "展开"}, {"c", "取消"}, {"s", "设置"}, {"q", "退出"}}
+	right := fmt.Sprintf("列表 %d%% · 详情 %d%%", m.ratio, 100-m.ratio)
+	if m.settingsMode {
+		pairs = [][2]string{{"↑↓", "选择"}, {"←→", "切换"}, {"enter", "输入"}, {"d", "默认"}, {"u", "撤销"}, {"ctrl+s", "保存"}, {"esc", "返回"}}
+		if m.set.editing {
+			pairs = [][2]string{{"enter", "确定"}, {"esc", "取消"}}
+		}
+		right = fmt.Sprintf("列表 %d%% · 说明 %d%%", m.ratio, 100-m.ratio)
+	}
 	var keys []string
-	for _, kv := range [][2]string{{"↑↓", "选择"}, {"tab", "切焦点"}, {"1-4", "标签"}, {"[ ]", "比例"}, {"z", "专注"}, {"e", "展开"}, {"c", "取消"}, {"q", "退出"}} {
+	for _, kv := range pairs {
 		keys = append(keys, p.text(p.ink).Background(p.kbd).Bold(true).Render(kv[0])+" "+p.text(p.dim).Render(kv[1]))
 	}
-	right := fmt.Sprintf("列表 %d%% · 详情 %d%%", m.ratio, 100-m.ratio)
 	if m.notice != "" {
 		right = m.notice
 	}

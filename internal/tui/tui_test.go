@@ -296,7 +296,7 @@ func TestViewThemes(t *testing.T) {
 			m.syncViewport()
 			view := m.View()
 			plain := ansi.Strip(view)
-			for _, want := range []string{"Baton", m.now.Format("15:04:05"), "● 1 运行", "✗ 1 失败", "✓ 1 完成", "需要关注  1", "进行中  1", "已完成  1", "修复用户分页", "失败", "✗ go test", "◌ go vet", "改动 +1 −1 · 1 个文件", "1 对话", "2 事件", "3 改动", "4 检查", "↑↓ 选择", "tab 切焦点", "1-4 标签", "[ ] 比例", "z 专注", "e 展开", "c 取消", "q 退出", "列表 38% · 详情 62%", "cursor_test.go:42"} {
+			for _, want := range []string{"Baton", m.now.Format("15:04:05"), "● 1 运行", "✗ 1 失败", "✓ 1 完成", "需要关注  1", "进行中  1", "已完成  1", "修复用户分页", "失败", "✗ go test", "◌ go vet", "改动 +1 −1 · 1 个文件", "1 对话", "2 事件", "3 改动", "4 检查", "↑↓ 选择", "tab/点击 切焦点", "1-4 标签", "[ ] 比例", "z 专注", "e 展开", "c 取消", "s 设置", "q 退出", "列表 38% · 详情 62%", "cursor_test.go:42"} {
 				if !strings.Contains(plain, want) {
 					t.Errorf("missing %q:\n%s", want, plain)
 				}
@@ -665,5 +665,168 @@ func TestLongPromptFolds(t *testing.T) {
 	m.expand = true
 	if got := m.prompt(task.ID, task.Turns[0], 60); strings.Contains(got, "e 展开") {
 		t.Fatal("expanded prompt still folded")
+	}
+}
+
+func TestSettingsMode(t *testing.T) {
+	svc, _, _ := fixtureTask(t)
+	dir := t.TempDir()
+	t.Setenv("BATON_CONFIG_DIR", dir)
+	t.Setenv("BATON_AGENT", "")
+	path := filepath.Join(dir, "config.json")
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func() string {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	press := func(m model, keys ...tea.KeyMsg) model {
+		for _, k := range keys {
+			m, _ = update(m, k)
+		}
+		return m
+	}
+	enter, right, ctrlS := tea.KeyMsg{Type: tea.KeyEnter}, tea.KeyMsg{Type: tea.KeyRight}, tea.KeyMsg{Type: tea.KeyCtrlS}
+	write(`{"agents":{"codex":{"model":"gpt-5.5","effort":"high"}}}`)
+	m := press(refresh(newModel(svc, "dark")), key("s"), key("j"), key("j"), key("j"), right)
+	if !m.settingsMode || m.set.draft.Agents["codex"].Effort != "xhigh" {
+		t.Fatalf("codex effort did not cycle: %+v", m.set.draft)
+	}
+	view := ansi.Strip(m.View() + m.details())
+	for _, want := range []string{" 设置", " 说明", "CODEX", "● 1 项设置未保存", "codex · effort", `model_reasoning_effort="xhigh"`, `+       "effort": "xhigh"`, "ctrl+s 保存"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("missing %q:\n%s", want, view)
+		}
+	}
+	assertSize(t, m.View(), m.width, m.height)
+
+	// Typed input, d for the default and u to undo, on codex model.
+	m = press(m, key("k"), enter, tea.KeyMsg{Type: tea.KeyCtrlU}, key("o3"), enter)
+	if m.set.editing || m.set.draft.Agents["codex"].Model != "o3" {
+		t.Fatalf("typed model: %+v", m.set.draft)
+	}
+	if m = press(m, key("d")); m.set.draft.Agents["codex"].Model != "" {
+		t.Fatal("d did not clear")
+	}
+	if m = press(m, key("u")); m.set.draft.Agents["codex"].Model != "gpt-5.5" {
+		t.Fatal("u did not restore")
+	}
+
+	// An invalid path is flagged and blocks saving.
+	m = press(m, key("j"), key("j"), enter)
+	m = press(m, key("bin/codex"), enter, ctrlS)
+	if !strings.Contains(ansi.Strip(m.details()), "must be absolute") || !strings.Contains(read(), `"high"`) || m.set.cursor != 4 {
+		t.Fatalf("invalid path saved:\n%s\n%s", read(), ansi.Strip(m.details()))
+	}
+	m = press(m, key("d"), ctrlS)
+	if got := read(); m.set.changed() != 0 || got != "{\n  \"agents\": {\n    \"codex\": {\n      \"model\": \"gpt-5.5\",\n      \"effort\": \"xhigh\"\n    }\n  }\n}\n" {
+		t.Fatalf("save: %d %q", m.set.changed(), got)
+	}
+
+	// An outside edit is never overwritten; r reloads it.
+	write(`{"agent":"pi"}`)
+	m = press(m, key("k"), right, ctrlS)
+	if read() != `{"agent":"pi"}` || !strings.Contains(m.notice, "外部修改") {
+		t.Fatalf("outside edit overwritten: %s %q", read(), m.notice)
+	}
+	if m = press(m, key("r")); m.set.draft.Agent != "pi" || m.set.changed() != 0 {
+		t.Fatalf("reload: %+v", m.set.draft)
+	}
+
+	// Leaving keeps the draft; q asks before dropping it.
+	m = press(m, key("k"), key("k"), key("k"), key("k"), right, tea.KeyMsg{Type: tea.KeyEsc})
+	if m.settingsMode || m.set.changed() != 1 || !strings.Contains(m.notice, "未保存") {
+		t.Fatalf("esc: %v %d %q", m.settingsMode, m.set.changed(), m.notice)
+	}
+	m, cmd := update(m, key("q"))
+	if cmd != nil || !m.settingsMode || !m.set.quit || !strings.Contains(ansi.Strip(m.View()), "再按 q 放弃并退出") {
+		t.Fatal("q with unsaved settings quit at once")
+	}
+	if _, cmd = update(m, key("q")); cmd == nil {
+		t.Fatal("second q did not quit")
+	} else if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatal("second q did not quit")
+	}
+
+	write(`{broken`)
+	m = press(newModel(svc, "light"), key("s"))
+	if m.set.err == nil || !strings.Contains(ansi.Strip(m.View()), "修好后按 r 重新读取") {
+		t.Fatal("broken config not reported")
+	}
+	if m = press(m, enter, key("d")); m.set.editing || m.set.changed() != 0 {
+		t.Fatal("broken config editable")
+	}
+}
+
+func TestMouseFocusAndClicks(t *testing.T) {
+	svc, task, _ := fixtureTask(t)
+	t.Setenv("BATON_CONFIG_DIR", t.TempDir())
+	second := *task
+	second.ID = "20261011-110001-fedcba9876543210"
+	second.CreatedAt = task.CreatedAt.Add(-time.Minute)
+	writeTask(t, filepath.Join(svc.Home, "tasks", second.ID), &second)
+	m := refresh(newModel(svc, "light"))
+	press := func(x, y int, button tea.MouseButton) {
+		m, _ = update(m, tea.MouseMsg{X: x, Y: y, Button: button, Action: tea.MouseActionPress})
+	}
+	for _, size := range []tea.WindowSizeMsg{{Width: 140, Height: 40}, {Width: 80, Height: 40}} {
+		m, _ = update(m, size)
+		lw, lh, _, _ := m.layout()
+		detailX, detailY := lw+5, 10 // a cell in the detail body
+		bodyX, bodyY := lw+2, 2      // where the detail body's text starts
+		if m.width < 100 {
+			detailX, detailY, bodyX, bodyY = 5, lh+6, 1, lh+3
+		}
+		// List body: row 0 is the group header, rows 1-2 and 3-4 the two tasks.
+		press(1, 2+3, tea.MouseButtonLeft)
+		if m.selected != 1 || m.detail {
+			t.Fatalf("%v: click did not select the second task: %d", size, m.selected)
+		}
+		press(1, 2+1, tea.MouseButtonLeft)
+		if m.selected != 0 {
+			t.Fatalf("%v: click did not select the first task", size)
+		}
+		press(1, 2+0, tea.MouseButtonLeft) // group header: no change
+		press(detailX, detailY, tea.MouseButtonLeft)
+		if !m.detail || m.selected != 0 {
+			t.Fatalf("%v: detail click did not focus details", size)
+		}
+		press(bodyX+17, bodyY+m.tabRow(), tea.MouseButtonLeft) // "1 对话  2 事件  3 改动": column 17 is in 3 改动
+		if m.tab != 2 {
+			t.Fatalf("%v: tab click: %d", size, m.tab)
+		}
+		press(1, 4, tea.MouseButtonWheelDown)
+		if m.selected != 1 || !m.detail {
+			t.Fatalf("%v: wheel over list did not move the selection", size)
+		}
+		press(1, 4, tea.MouseButtonWheelUp)
+		m.tab = 0
+	}
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 12})
+	lw, _, _, _ := m.layout()
+	m.detail = false
+	press(lw+5, 6, tea.MouseButtonWheelDown)
+	if m.viewport.YOffset == 0 || m.detail {
+		t.Fatalf("wheel over details did not scroll them without focusing: %d", m.viewport.YOffset)
+	}
+
+	// Settings rows: 全局, agent, timeout, CODEX, model.
+	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 40})
+	m, _ = update(m, key("s"))
+	press(1, 2+4, tea.MouseButtonLeft)
+	if m.set.cursor != 2 {
+		t.Fatalf("field click: %d", m.set.cursor)
+	}
+	press(1, 2+3, tea.MouseButtonLeft)
+	if m.set.cursor != 2 {
+		t.Fatal("group header click moved the cursor")
 	}
 }

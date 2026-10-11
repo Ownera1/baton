@@ -27,7 +27,8 @@ const usage = `用法：
   baton ask [agent] <问题>        派出只读任务
   baton reply [任务] <消息>       在同一会话里继续
   baton wait|result|status|cancel [任务]
-  baton list | tui | config | mcp | version
+  baton list | tui | mcp | version
+  baton config                   终端里打开设置面板；管道或 -json 时打印配置
 
 <任务> 可以是文字、@文件，或 - 从标准输入读；[任务] 默认最近一个，可写 ID 的前缀或后缀。
 常用参数（可写在任意位置）：-w 等完成并打印结果  -check 命令  -no-check  -title 标题
@@ -91,6 +92,11 @@ func text(pos []string, stdin io.Reader, piped bool) (string, error) {
 	return strings.Join(pos, " "), nil
 }
 
+func terminal(f *os.File) bool {
+	st, err := f.Stat()
+	return err == nil && st.Mode()&os.ModeCharDevice != 0
+}
+
 func stdinPiped() bool {
 	st, err := os.Stdin.Stat()
 	return err == nil && st.Mode()&os.ModeCharDevice == 0
@@ -128,7 +134,7 @@ func run(args []string) error {
 		if _, err := parse(fs, args[1:]); err != nil {
 			return err
 		}
-		return tui.Run(svc, *theme)
+		return tui.Run(svc, *theme, false)
 	case "do", "ask", "run":
 		var req app.RunRequest
 		var commands checks
@@ -248,8 +254,12 @@ func run(args []string) error {
 			return nil
 		}
 	case "config":
+		theme := fs.String("theme", "auto", "auto|light|dark")
 		if _, err := parse(fs, args[1:]); err != nil {
 			return err
+		}
+		if !*asJSON && terminal(os.Stdin) && terminal(os.Stdout) {
+			return tui.Run(svc, *theme, true)
 		}
 		return printConfig(*asJSON)
 	case "list", "ls":
@@ -374,7 +384,7 @@ type agentConfig struct {
 
 // printConfig shows the config file and the defaults each agent gets from it.
 func printConfig(asJSON bool) error {
-	cfg, path, exists, err := app.LoadConfig()
+	cfg, path, raw, err := app.LoadConfig()
 	if err != nil {
 		return err
 	}
@@ -390,11 +400,11 @@ func printConfig(asJSON bool) error {
 		agents[name] = v
 	}
 	if asJSON {
-		return emit(map[string]any{"path": path, "exists": exists, "agent": cfg.DefaultAgent(),
+		return emit(map[string]any{"path": path, "exists": raw != nil, "agent": cfg.DefaultAgent(),
 			"timeout": cfg.TurnTimeout().String(), "agents": agents})
 	}
 	note := ""
-	if !exists {
+	if raw == nil {
 		note = "（不存在，使用默认值）"
 	}
 	fmt.Printf("配置 %s%s\n", path, note)
