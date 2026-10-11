@@ -1,0 +1,2 @@
+{"type":"step_start","timestamp":1791707788116,"sessionID":"ses_ed5e4d59affeJN1cyBj9JwoH7M","part":{"id":"prt_12a1b3354001ge3jjuzAFhv3Ns","sessionID":"ses_ed5e4d59affeJN1cyBj9JwoH7M","messageID":"msg_12a1b2acb001H7ASpAw7gOdFtC","type":"step-start","snapshot":"0d8a474fc67971fb3dd7616e26323d3066442555"}}
+{"type":"error","timestamp":1791707788157,"sessionID":"ses_ed5e4d59affeJN1cyBj9JwoH7M","error":{"type":"provider.auth","message":"Authorization failed","status":403,"response":{"body":"{\"status\":403,\"title\":\"Forbidden\",\"detail\":\"Authorization failed\"}"}}}
