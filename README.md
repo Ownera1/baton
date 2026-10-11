@@ -6,23 +6,35 @@ Baton 是 Go 编写的 Agent 派活中间层：主 Agent 选择任务和执行�
 brew install Ownera1/tap/baton   # 安装；以后用 brew upgrade baton 更新
 claude mcp add baton -- /opt/homebrew/bin/baton mcp   # 接入 Claude Code
 
-make build                  # bin/baton，Go 1.27.1；依赖已缓存时可离线构建
+make build                  # bin/baton
 make test                   # go vet ./... + go test -p 1 ./...
-
-bin/baton run -agent codex -repo /path/to/repo -task '实现这个功能' -title '实现用户分页' \
-  -check 'go test ./...' -timeout 30m
-bin/baton status <id> -json
-bin/baton wait <id> -timeout 10m -json
-bin/baton result <id> -json
-bin/baton reply <id> -msg '再补上边界处理' -timeout 30m
-bin/baton cancel <id>
-bin/baton list -json
-bin/baton tui -theme auto    # auto|light|dark，每秒刷新数据
-
-bin/baton run -agent claude -repo /path/to/repo -mode read -task @question.txt
 ```
 
-`run`/`reply` 立即返回 `{ "id": "…", "status": "queued" }`。独立 session 中的 `_worker` 执行任务，关闭 CLI、终端或 MCP 连接不会取消任务。`-task` 和 `-msg` 支持文本或 `@文件`，`-check` 可以重复传入；`-model`/`-effort` 透传给 Agent。主 Agent 派活时应通过 `-title`（MCP 的 `title`）传入对话标题；未传时取任务的首个非空行，去掉行首 Markdown 标记及成对的反引号/粗体标记，按终端显示宽度缩到 40 列，超出加 `…`（中文占两列）。标题保存在任务中；旧任务只在显示时从第 1 轮 prompt 推导，不改旧文件。默认 `write`，单轮超时默认 30 分钟，包含 Agent 和检查时间。CLI `wait` 默认 10 分钟，等待超时输出当前 JSON 并以非零状态退出。
+## 日常用法
+
+```sh
+baton do 给用户列表 API 加分页            # 改代码：默认 codex、当前仓库、自动检查
+baton do -w @brief.md                     # 派出后等它做完，直接打印结果
+baton ask claude 解释 guard 包的内存采样   # 只读提问，可在任务前写 Agent 名
+git diff | baton ask 评审这段改动          # 任务文字也可以从管道读
+baton reply 再补上边界处理                 # 继续最近一个任务的同一会话
+baton wait                                # 等最近一个任务；也可写 ID 后 8 位
+baton result 2fa5f633                     # 结果、分支、检查、diffstat、最终回复
+baton                                     # 打开面板（同 baton tui）
+```
+
+| 默认值 | 说明 |
+|---|---|
+| Agent | `codex`；用 `BATON_AGENT` 改，或在任务前写 `claude`、`grok`、`agy`、`pi` |
+| 仓库 | 当前目录所在的 git 仓库；`-repo` 指定其他仓库。MCP 默认取服务启动目录 |
+| 模型 / effort | 用各 Agent 自己的配置；`-model`、`-effort` 只在需要时覆盖 |
+| 检查（仅改代码任务） | 依次查找 `.baton/checks`（一行一条命令，`#` 注释，空文件表示不检查）、`go.mod`（`go vet` + `go test`）、`Cargo.toml`（`cargo test`）、Makefile 的 `test` 目标。npm 项目不自动推断：worktree 里没有 `node_modules`，请写进 `.baton/checks`。`-check` 指定后不再推断，`-no-check` 跳过检查 |
+| 任务 | 不写就是最近一个；写完整 ID、唯一前缀或后缀都行 |
+| 超时 | 单轮 2 小时，包含 Agent 和检查时间 |
+
+参数可以写在任意位置；任务文字以 `-` 开头时放在 `--` 之后。输出默认给人看，加 `-json` 输出结构化结果。`-w` 等待完成并打印结果，任务失败时退出码非零；Ctrl-C 只停止等待，任务继续。`baton run -agent … -repo … -task …` 等旧写法继续可用。
+
+`do`/`ask`/`reply` 立即返回，独立 session 中的 `_worker` 执行任务，关闭 CLI、终端或 MCP 连接不会取消任务。`-task` 和 `-msg` 支持文本或 `@文件`。主 Agent 派活时应通过 `-title`（MCP 的 `title`）传入对话标题；未传时取任务的首个非空行，去掉行首 Markdown 标记及成对的反引号/粗体标记，按终端显示宽度缩到 40 列，超出加 `…`（中文占两列）。标题保存在任务中；旧任务只在显示时从第 1 轮 prompt 推导，不改旧文件。
 
 | Agent | read | write | 续接 | 输出 |
 |---|---|---|---|---|
@@ -73,7 +85,7 @@ bin/baton mcp
 }
 ```
 
-stdio 提供 `baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 为 `agent/repo/task/title/mode/model/effort/checks/timeout`；reply 为 `id/msg/timeout`；其余任务工具传 `id`。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
+stdio 提供 `baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；reply 为 `id/msg/timeout`；其余任务工具传 `id`。`id` 可写唯一前缀或后缀，留空表示最近一个任务。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
 
 数据默认保存在 `~/.local/share/baton`，可通过 `BATON_HOME` 修改。每个 `tasks/<id>/` 保存原子更新的 `task.json`、原样的 `turn-n.stdout/stderr`、Codex 的 `turn-n.last`、`patch.diff`、`checks/turn-n/` 和 `worker.log`。`request.json` 是启动/续接信箱，`lock` 串行保护同一任务，`worker.pid` 记录启动 PID，`cancel-n` 是取消标记；只有 worker 写 `task.json`。同一个 BATON_HOME 下的 `check-gate.lock` 跨进程串行运行所有检查。
 

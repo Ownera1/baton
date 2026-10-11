@@ -77,6 +77,9 @@ printf 'raw stderr\n' >&2
 		t.Helper()
 		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 		defer cancel()
+		if dst != nil {
+			args = append(args, "-json") // output is human-readable by default; flags may follow positionals
+		}
 		cmd := exec.CommandContext(ctx, bin, args...)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
@@ -148,9 +151,10 @@ printf 'raw stderr\n' >&2
 	if task.Status != "failed" || task.Verify.Status != "fail" || task.Verify.Checks[0].ExitCode != 1 {
 		t.Fatalf("failed check: %+v", task)
 	}
-	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "no checks", "-timeout", "20s")
-	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
-	if task.Status != "succeeded" || task.Verify.Status != "none" {
+	// do: default agent, positional task text with flags after it, short id.
+	cli(&submitted, "do", "no", "checks", "-repo", repo, "-timeout", "20s")
+	cli(&task, "wait", submitted.ID[len(submitted.ID)-8:], "-timeout", "20s")
+	if task.Status != "succeeded" || task.Verify.Status != "none" || task.Agent != "codex" || task.Turns[0].Prompt != "no checks" {
 		t.Fatalf("no checks: %+v", task)
 	}
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "dirty check", "-check", "touch check-created.txt", "-timeout", "20s")

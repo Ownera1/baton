@@ -44,19 +44,21 @@ type Task struct {
 }
 
 type RunRequest struct {
-	Title   string   `json:"title,omitempty" jsonschema:"Conversation title supplied by the dispatching agent; inferred from task when omitted"`
-	Agent   string   `json:"agent"`
-	Repo    string   `json:"repo"`
-	Task    string   `json:"task"`
-	Mode    string   `json:"mode,omitempty"`
-	Model   string   `json:"model,omitempty"`
-	Effort  string   `json:"effort,omitempty"`
-	Checks  []string `json:"checks,omitempty"`
-	Timeout string   `json:"timeout,omitempty"`
+	Title  string   `json:"title,omitempty" jsonschema:"Conversation title supplied by the dispatching agent; inferred from task when omitted"`
+	Agent  string   `json:"agent,omitempty" jsonschema:"codex (default), claude, grok, agy or pi"`
+	Repo   string   `json:"repo,omitempty" jsonschema:"git repository; defaults to the current directory"`
+	Task   string   `json:"task"`
+	Mode   string   `json:"mode,omitempty"`
+	Model  string   `json:"model,omitempty"`
+	Effort string   `json:"effort,omitempty"`
+	Checks []string `json:"checks,omitempty" jsonschema:"check commands; omitted means detect from the project (.baton/checks, go.mod, Cargo.toml, Makefile test)"`
+	// NoChecks skips detection and any checks for a write task.
+	NoChecks bool   `json:"no_checks,omitempty"`
+	Timeout  string `json:"timeout,omitempty" jsonschema:"turn timeout, default 2h"`
 }
 
 type ReplyRequest struct {
-	ID      string `json:"id"`
+	ID      string `json:"id,omitempty" jsonschema:"task id, unique prefix or suffix; empty means the newest task"`
 	Message string `json:"msg"`
 	Timeout string `json:"timeout,omitempty"`
 }
