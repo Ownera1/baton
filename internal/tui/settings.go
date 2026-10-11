@@ -31,7 +31,8 @@ type settings struct {
 	cursor       int
 	editing      bool
 	input        textinput.Model
-	quit         bool // q pressed with unsaved changes; a second q quits
+	quit         bool   // q pressed with unsaved changes; a second q quits
+	shownTheme   string // the theme value the panel last applied, to preview edits live
 }
 
 type executable struct {
@@ -43,6 +44,7 @@ type executable struct {
 // accepts typed input. "" means the default.
 type field struct {
 	agent, key string // agent is empty for global fields
+	group      string // list heading when not an agent's; default 全局
 	options    []string
 	get        func(app.Config) string
 	set        func(*app.Config, string)
@@ -64,6 +66,8 @@ func settingsFields() []field {
 			get: func(c app.Config) string { return c.Agent }, set: func(c *app.Config, v string) { c.Agent = v }},
 		{key: "timeout", options: []string{"", "30m", "1h", "2h", "4h"},
 			get: func(c app.Config) string { return c.Timeout }, set: func(c *app.Config, v string) { c.Timeout = v }},
+		{group: "面板", key: "theme", options: []string{"", "light", "dark"},
+			get: func(c app.Config) string { return c.Theme }, set: func(c *app.Config, v string) { c.Theme = v }},
 	}
 	for _, name := range app.Agents {
 		one := func(key string, options []string, p func(*app.AgentConfig) *string) field {
@@ -111,6 +115,8 @@ func (f field) help() string {
 		return "baton do、ask 和 MCP 没指定 Agent 时用哪个。环境变量 BATON_AGENT 优先于这里。"
 	case "timeout":
 		return "单轮上限，包含 Agent 和检查时间。命令行 -timeout 优先。"
+	case "theme":
+		return "面板配色。默认跟随终端背景；切换时立即预览，ctrl+s 保存后下次打开也用它。命令行 -theme 优先。"
 	case "model":
 		return fmt.Sprintf("传给 %s 的模型名，原样传入，不校验。命令行 -model 优先；留空时用 %s 自己的配置。", f.agent, f.agent)
 	case "effort":
@@ -156,7 +162,10 @@ func (s settings) changed() int {
 
 func (m model) enterSettings() model {
 	m.settingsMode, m.zoom = true, false
-	if !m.set.loaded || m.set.changed() == 0 {
+	if !m.set.loaded {
+		m.set.load()
+		m.set.shownTheme = m.set.draft.Theme // keep whatever theme the panel opened with
+	} else if m.set.changed() == 0 {
 		m.set.load() // pick up outside edits unless that would drop a draft
 	}
 	m.viewport.GotoTop()
@@ -182,6 +191,7 @@ func (m model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if f.key == "path" {
 				s.resolve()
 			}
+			m.previewTheme()
 		case "esc":
 			s.editing = false
 		default:
@@ -267,8 +277,17 @@ func (m model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	}
+	m.previewTheme()
 	m.syncViewport()
 	return m, nil
+}
+
+// previewTheme repaints the panel when the theme value changes, saved or not.
+func (m *model) previewTheme() {
+	if v := m.set.draft.Theme; v != m.set.shownTheme && (app.Config{Theme: v}).Validate() == nil {
+		m.set.shownTheme = v
+		m.useTheme(v)
+	}
 }
 
 func (m *model) moveField(d int) {
@@ -326,7 +345,7 @@ func (m model) settingsLines(w int) ([]string, []int, int) {
 	}
 	selected, group := 0, "-"
 	for i, f := range fields {
-		if g := cmp.Or(f.agent, "全局"); g != group {
+		if g := cmp.Or(f.agent, f.group, "全局"); g != group {
 			group = g
 			lines, owners = append(lines, p.text(p.faint).Render(fit(" "+strings.ToUpper(g), w))), append(owners, -1)
 		}
@@ -380,6 +399,8 @@ func (m model) fieldValue(f field, v string) string {
 		text = "默认（" + app.Config{}.DefaultAgent() + "）"
 	case "timeout":
 		text = "默认（" + shortDuration(app.DefaultTimeout) + "）"
+	case "theme":
+		text = "默认（跟随终端，当前" + map[bool]string{true: "深色", false: "浅色"}[m.darkTerminal] + "）"
 	case "path":
 		text = "默认 → " + cmp.Or(m.set.exe[f.agent].path, "PATH 中没有 "+f.agent)
 	}

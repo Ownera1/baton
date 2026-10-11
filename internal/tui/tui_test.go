@@ -696,7 +696,7 @@ func TestSettingsMode(t *testing.T) {
 	}
 	enter, right, ctrlS := tea.KeyMsg{Type: tea.KeyEnter}, tea.KeyMsg{Type: tea.KeyRight}, tea.KeyMsg{Type: tea.KeyCtrlS}
 	write(`{"agents":{"codex":{"model":"gpt-5.5","effort":"high"}}}`)
-	m := press(refresh(newModel(svc, "dark")), key("s"), key("j"), key("j"), key("j"), right)
+	m := press(refresh(newModel(svc, "dark")), key("s"), key("j"), key("j"), key("j"), key("j"), right)
 	if !m.settingsMode || m.set.draft.Agents["codex"].Effort != "xhigh" {
 		t.Fatalf("codex effort did not cycle: %+v", m.set.draft)
 	}
@@ -723,7 +723,7 @@ func TestSettingsMode(t *testing.T) {
 	// An invalid path is flagged and blocks saving.
 	m = press(m, key("j"), key("j"), enter)
 	m = press(m, key("bin/codex"), enter, ctrlS)
-	if !strings.Contains(ansi.Strip(m.details()), "must be absolute") || !strings.Contains(read(), `"high"`) || m.set.cursor != 4 {
+	if !strings.Contains(ansi.Strip(m.details()), "must be absolute") || !strings.Contains(read(), `"high"`) || m.set.cursor != 5 {
 		t.Fatalf("invalid path saved:\n%s\n%s", read(), ansi.Strip(m.details()))
 	}
 	m = press(m, key("d"), ctrlS)
@@ -818,7 +818,7 @@ func TestMouseFocusAndClicks(t *testing.T) {
 		t.Fatalf("wheel over details did not scroll them without focusing: %d", m.viewport.YOffset)
 	}
 
-	// Settings rows: 全局, agent, timeout, CODEX, model.
+	// Settings rows: 全局, agent, timeout, 面板, theme.
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 40})
 	m, _ = update(m, key("s"))
 	press(1, 2+4, tea.MouseButtonLeft)
@@ -828,5 +828,33 @@ func TestMouseFocusAndClicks(t *testing.T) {
 	press(1, 2+3, tea.MouseButtonLeft)
 	if m.set.cursor != 2 {
 		t.Fatal("group header click moved the cursor")
+	}
+}
+
+func TestThemeSetting(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BATON_CONFIG_DIR", dir)
+	m := newModel(&app.Service{Home: t.TempDir()}, "dark")
+	for _, k := range []tea.KeyMsg{key("s"), key("j"), key("j")} {
+		m, _ = update(m, k)
+	}
+	if m.theme != "dark" || !strings.Contains(ansi.Strip(m.View()), "theme") {
+		t.Fatal("entering settings changed the -theme palette")
+	}
+	right := tea.KeyMsg{Type: tea.KeyRight}
+	if m, _ = update(m, right); m.set.draft.Theme != "light" || m.theme != "light" || m.palette != themePalette("light") {
+		t.Fatalf("no live preview: %q %q", m.set.draft.Theme, m.theme)
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyCtrlS})
+	if b, err := os.ReadFile(filepath.Join(dir, "config.json")); err != nil || !strings.Contains(string(b), `"theme": "light"`) {
+		t.Fatalf("theme not saved: %s %v", b, err)
+	}
+	if m, _ = update(m, key("d")); m.theme != map[bool]string{true: "dark", false: "light"}[m.darkTerminal] {
+		t.Fatal("default did not follow the terminal")
+	}
+	m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter})
+	m, _ = update(m, key("blue"))
+	if m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter}); m.set.draft.Theme != "blue" || !strings.Contains(ansi.Strip(m.details()), "not auto, light or dark") {
+		t.Fatal("invalid theme not flagged")
 	}
 }

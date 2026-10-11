@@ -16,8 +16,14 @@ import (
 )
 
 // Run opens the panel; settings opens it on the config fields (baton config).
+// An empty theme uses the configured one; a broken config is reported in
+// settings rather than keeping the panel closed.
 func Run(svc *app.Service, theme string, settings bool) error {
-	if theme != "auto" && theme != "light" && theme != "dark" {
+	if theme == "" {
+		cfg, _, _, _ := app.LoadConfig()
+		theme = cfg.Theme
+	}
+	if theme != "" && theme != "auto" && theme != "light" && theme != "dark" {
 		return fmt.Errorf("theme must be auto, light or dark")
 	}
 	m := newModel(svc, theme)
@@ -38,7 +44,8 @@ type model struct {
 	dragging      bool
 	spinning      bool // a spinner tick is scheduled; only while a task runs
 	ratio, tab    int
-	theme         string
+	theme         string // light or dark, as resolved
+	darkTerminal  bool   // detected once at start; querying while running would eat input
 	palette       palette
 	viewport      viewport.Model
 	logs          map[logKey]logSnapshot
@@ -92,19 +99,9 @@ type cancelMsg struct {
 }
 
 func newModel(svc *app.Service, themes ...string) model {
-	theme := "auto"
-	if len(themes) > 0 {
-		theme = themes[0]
-	}
-	if theme == "auto" {
-		theme = "light"
-		if lipgloss.HasDarkBackground() {
-			theme = "dark"
-		}
-	}
-	m := model{svc: svc, width: 120, height: 30, now: time.Now(), ratio: 38,
-		theme: theme, palette: themePalette(theme), viewport: viewport.New(1, 1),
-		logs: map[logKey]logSnapshot{}, patches: map[string]fileSnapshot{}, markdown: map[markdownKey]string{}, render: renderMarkdown}
+	m := model{svc: svc, width: 120, height: 30, now: time.Now(), ratio: 38, darkTerminal: lipgloss.HasDarkBackground(),
+		viewport: viewport.New(1, 1), logs: map[logKey]logSnapshot{}, patches: map[string]fileSnapshot{}, markdown: map[markdownKey]string{}, render: renderMarkdown}
+	m.useTheme(append(themes, "")[0])
 	var settings struct {
 		Ratio int `json:"ratio"`
 	}
@@ -113,6 +110,17 @@ func newModel(svc *app.Service, themes ...string) model {
 	}
 	m.syncViewport()
 	return m
+}
+
+// useTheme applies light or dark; anything else follows the terminal.
+func (m *model) useTheme(theme string) {
+	if theme != "light" && theme != "dark" {
+		theme = "light"
+		if m.darkTerminal {
+			theme = "dark"
+		}
+	}
+	m.theme, m.palette = theme, themePalette(theme)
 }
 
 func tick() tea.Cmd {
