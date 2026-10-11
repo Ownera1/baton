@@ -54,6 +54,8 @@ func TestEndToEnd(t *testing.T) {
 	t.Setenv("BATON_BIN", bin)
 	t.Setenv("READ_PWD", filepath.Join(dir, "read-pwd"))
 	t.Setenv("SOURCE_REPO", repo)
+	nestedOut := filepath.Join(dir, "nested.out")
+	t.Setenv("NESTED_OUT", nestedOut)
 	argvLog := filepath.Join(dir, "argv.log")
 	t.Setenv("ARGV_LOG", argvLog)
 	// Only this fake codex is executed; no provider or real agent is used.
@@ -65,7 +67,8 @@ case "$*" in
   *HOLD*) echo "$$" > agent.pid; sleep 60 ;;
   *DELAY*) sleep 1 ;;
   *BASE-READ*) pwd -P > "$READ_PWD" ;;
-  *NESTED*) "$BATON_BIN" do child -repo "$SOURCE_REPO" > nested.out 2>&1 || true ;;
+  *NESTED-NOENV*) env -u BATON_DEPTH "$BATON_BIN" do child -repo "$SOURCE_REPO" > "$NESTED_OUT" 2>&1 || true ;;
+  *NESTED*) "$BATON_BIN" do child -repo "$SOURCE_REPO" > "$NESTED_OUT" 2>&1 || true ;;
 esac
 case "$*" in *read-only*) ;; *) printf 'turn\n' >> result.txt ;; esac
 cat "$FIXTURE_PATH"
@@ -162,8 +165,14 @@ printf 'raw stderr\n' >&2
 	}
 	cli(&submitted, "do", "NESTED", "-repo", repo, "-no-check", "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s")
-	if out, err := os.ReadFile(filepath.Join(task.Worktree, "nested.out")); err != nil || !strings.Contains(string(out), "BATON_DEPTH=1") {
+	if out, err := os.ReadFile(nestedOut); err != nil || !strings.Contains(string(out), "BATON_DEPTH=1") {
 		t.Fatalf("nested dispatch: %s %v", out, err)
+	}
+	// Without the variable, as codex starts MCP servers, the worker ancestor still refuses.
+	cli(&submitted, "ask", "NESTED-NOENV", "-repo", repo, "-timeout", "20s")
+	cli(&task, "wait", submitted.ID, "-timeout", "20s")
+	if out, err := os.ReadFile(nestedOut); err != nil || !strings.Contains(string(out), "worker pid") {
+		t.Fatalf("nested dispatch without BATON_DEPTH: %s %v", out, err)
 	}
 	// base: write branches from the first task even with a dirty source and no -repo; read runs in its worktree.
 	firstID := result.ID
