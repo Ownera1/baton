@@ -1,6 +1,7 @@
 package app
 
 import (
+	"baton/internal/agent"
 	"errors"
 	"fmt"
 	"os"
@@ -90,4 +91,52 @@ func (s *Service) Resolve(ref string) (string, error) {
 		matches = append(matches[:5], "…")
 	}
 	return "", fmt.Errorf("%q matches several tasks: %s", ref, strings.Join(matches, ", "))
+}
+
+// agentNotes tell the main agent what each sub-agent is and how it is run.
+var agentNotes = map[string]string{
+	"codex":  "OpenAI Codex CLI. read: read-only sandbox; write: workspace-write sandbox, no approvals.",
+	"claude": "Claude Code. read: plan mode; write: acceptEdits.",
+	"grok":   "Grok CLI. read: only read_file, list_dir and grep; write: auto with a workspace sandbox.",
+	"agy":    "Antigravity CLI. read: plan mode; write: accept-edits.",
+	"pi":     "pi. read: read, grep, find and ls; write: default tools with no sandbox, only the git worktree isolates changes.",
+}
+
+// AgentInfo is one sub-agent the main agent may dispatch to.
+type AgentInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Model       string `json:"model,omitempty"`
+	Effort      string `json:"effort,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+	Error       string `json:"error,omitempty" jsonschema:"why dispatching to it would fail, such as a missing executable"`
+}
+
+type AgentList struct {
+	Agents []AgentInfo `json:"agents"`
+}
+
+// Exposed lists the agents not hidden in the config, for baton_agents.
+func Exposed() (*AgentList, error) {
+	cfg, _, _, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	out := &AgentList{Agents: []AgentInfo{}}
+	for _, name := range Agents {
+		ac := cfg.Agents[name]
+		if ac.Hidden {
+			continue
+		}
+		info := AgentInfo{Name: name, Description: agentNotes[name], Model: ac.Model, Effort: ac.Effort, Default: name == cfg.DefaultAgent()}
+		if _, err := agent.Argv(name, agent.Options{Path: ac.Path}); err != nil {
+			info.Error = err.Error()
+		}
+		out.Agents = append(out.Agents, info)
+	}
+	return out, nil
+}
+
+func hidden(name string) error {
+	return fmt.Errorf("agent %s is hidden from the main agent (agents.%s.hidden in the Baton config); call baton_agents for the agents you may use", name, name)
 }

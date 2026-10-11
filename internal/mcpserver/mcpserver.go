@@ -25,8 +25,14 @@ type taskID struct {
 }
 
 func register(srv *mcp.Server, svc *app.Service) {
-	mcp.AddTool(srv, &mcp.Tool{Name: "baton_run", Description: "Dispatch one task to an agent in a detached worker. Only task is required: agent, model and effort default to the user's Baton config (agent codex if unset), repo to the server's directory, checks are detected from the project. Pass the conversation title in title. Mode defaults to write; no planning or review."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_agents", OutputSchema: map[string]any{"type": "object"}, Description: "List the sub-agents you may dispatch to: name, what it is and how read and write tasks run, configured model and effort, the default, and any error that would make dispatch fail. Agents the user hid are omitted and refused by baton_run and baton_reply."},
+		func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, *app.AgentList, error) {
+			out, err := app.Exposed()
+			return nil, out, err
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_run", Description: "Dispatch one task to an agent in a detached worker. Only task is required: agent (one listed by baton_agents), model and effort default to the user's Baton config (agent codex if unset), repo to the server's directory, checks are detected from the project. Pass the conversation title in title. Mode defaults to write; no planning or review."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in app.RunRequest) (*mcp.CallToolResult, *app.Submitted, error) {
+			in.FromMCP = true
 			out, err := svc.Run(in)
 			return nil, out, err
 		})
@@ -76,7 +82,7 @@ func register(srv *mcp.Server, svc *app.Service) {
 			if err != nil {
 				return nil, nil, err
 			}
-			in.ID = id
+			in.ID, in.FromMCP = id, true
 			out, err := svc.Reply(in)
 			return nil, out, err
 		})

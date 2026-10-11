@@ -46,7 +46,7 @@ type Task struct {
 
 type RunRequest struct {
 	Title  string   `json:"title,omitempty" jsonschema:"Conversation title supplied by the dispatching agent; inferred from task when omitted"`
-	Agent  string   `json:"agent,omitempty" jsonschema:"codex, claude, grok, agy or pi; defaults to BATON_AGENT, the Baton config, then codex"`
+	Agent  string   `json:"agent,omitempty" jsonschema:"an agent listed by baton_agents; defaults to BATON_AGENT, the Baton config, then codex"`
 	Repo   string   `json:"repo,omitempty" jsonschema:"git repository; defaults to the current directory"`
 	Task   string   `json:"task"`
 	Mode   string   `json:"mode,omitempty"`
@@ -56,12 +56,15 @@ type RunRequest struct {
 	// NoChecks skips detection and any checks for a write task.
 	NoChecks bool   `json:"no_checks,omitempty"`
 	Timeout  string `json:"timeout,omitempty" jsonschema:"turn timeout, default 2h"`
+	// FromMCP refuses agents hidden from the main agent.
+	FromMCP bool `json:"-"`
 }
 
 type ReplyRequest struct {
 	ID      string `json:"id,omitempty" jsonschema:"task id, unique prefix or suffix; empty means the newest task"`
 	Message string `json:"msg"`
 	Timeout string `json:"timeout,omitempty"`
+	FromMCP bool   `json:"-"`
 }
 
 type Submitted struct {

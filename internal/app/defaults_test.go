@@ -80,7 +80,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 	write(`{"agent":"claude","timeout":"30m","theme":"dark","agents":{"claude":{"model":"opus","effort":"high","path":"/opt/claude"},"pi":{"path":"pi-dev"}}}`)
 	c, _, raw, err := LoadConfig()
-	if err != nil || raw == nil || c.DefaultAgent() != "claude" || c.TurnTimeout() != 30*time.Minute || c.Agents["claude"] != (AgentConfig{"opus", "high", "/opt/claude"}) {
+	if err != nil || raw == nil || c.DefaultAgent() != "claude" || c.TurnTimeout() != 30*time.Minute || c.Agents["claude"] != (AgentConfig{Model: "opus", Effort: "high", Path: "/opt/claude"}) {
 		t.Fatalf("valid file: %+v %v", c, err)
 	}
 	t.Setenv("BATON_AGENT", "grok")

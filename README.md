@@ -45,14 +45,15 @@ baton                                     # 打开面板（同 baton tui）
   "agents": {
     "codex":  { "model": "gpt-5.5", "effort": "high" },
     "claude": { "model": "opus", "effort": "xhigh" },
-    "grok":   { "path": "/opt/homebrew/bin/grok" }
+    "grok":   { "path": "/opt/homebrew/bin/grok" },
+    "pi":     { "hidden": true }
   }
 }
 ```
 
-优先级：命令行或 MCP 参数 > `BATON_AGENT`（仅 Agent）> 配置 > 内置默认。`effort` 原样传给 Agent（codex 为 `model_reasoning_effort`，pi 为 `--thinking`），取值以各 Agent 为准。`path` 写绝对路径或 PATH 里的命令名。配置在派活时读取，模型、effort、路径写入任务，`reply` 沿用，之后改配置不影响已有对话；MCP 每次派活重新读取，无需重启。未知字段、未知 Agent 名或无法解析的超时会直接报错，不会悄悄回退。
+优先级：命令行或 MCP 参数 > `BATON_AGENT`（仅 Agent）> 配置 > 内置默认。`effort` 原样传给 Agent（codex 为 `model_reasoning_effort`，pi 为 `--thinking`），取值以各 Agent 为准。`path` 写绝对路径或 PATH 里的命令名。配置在派活时读取，模型、effort、路径写入任务，`reply` 沿用，之后改配置不影响已有对话；MCP 每次派活重新读取，无需重启。未知字段、未知 Agent 名或无法解析的超时会直接报错，不会悄悄回退。`hidden: true` 让主 Agent 看不到这个 Agent：MCP 的 `baton_agents` 不列出，`baton_run`、`baton_reply`（包括没写 Agent 而落到默认值的情况）直接报错；状态、结果、取消不受影响，你在终端里用 CLI 也不受影响。
 
-在终端里运行 `baton config`，或在面板里按 `s`，左栏换成 18 项设置（全局 `agent`、`timeout`，面板 `theme`，每个 Agent 的 `model`、`effort`、`path`），右栏说明当前项：可选值、该 Agent 一次写任务的完整命令（配置带来的参数高亮）和保存后的文件（改动行标 `+`）。`←`/`→` 切换取值（effort 取值来自各 CLI 的 `--help`，grok 未列出只能输入），`enter` 输入任意值，`d` 恢复默认，`u` 撤销本项，`ctrl+s` 保存，`esc` 或 `s` 回到对话。空值即默认，灰色显示实际会用什么；`path` 找不到时提示但允许保存，校验不过的值标红且不能保存。保存先写临时文件再改名替换，权限 0600；打开后文件被外部改过则拒绝覆盖，按 `r` 重新读取。未保存的改动离开设置后仍保留，顶栏提示数量，按 `q` 退出前要再确认一次。
+在终端里运行 `baton config`，或在面板里按 `s`，左栏换成 23 项设置（全局 `agent`、`timeout`，面板 `theme`，每个 Agent 的 `model`、`effort`、`path`、`hidden`），右栏说明当前项：可选值、该 Agent 一次写任务的完整命令（配置带来的参数高亮）和保存后的文件（改动行标 `+`）。`←`/`→` 切换取值（effort 取值来自各 CLI 的 `--help`，grok 未列出只能输入），`enter` 输入任意值，`d` 恢复默认，`u` 撤销本项，`ctrl+s` 保存，`esc` 或 `s` 回到对话。空值即默认，灰色显示实际会用什么；`path` 找不到时提示但允许保存，校验不过的值标红且不能保存。保存先写临时文件再改名替换，权限 0600；打开后文件被外部改过则拒绝覆盖，按 `r` 重新读取。未保存的改动离开设置后仍保留，顶栏提示数量，按 `q` 退出前要再确认一次。
 
 参数可以写在任意位置；任务文字以 `-` 开头时放在 `--` 之后。输出默认给人看，加 `-json` 输出结构化结果。`-w` 等待完成并打印结果，任务失败时退出码非零；Ctrl-C 只停止等待，任务继续。`baton run -agent … -repo … -task …` 等旧写法继续可用。
 
@@ -108,7 +109,7 @@ bin/baton mcp
 }
 ```
 
-stdio 提供 `baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；reply 为 `id/msg/timeout`；其余任务工具传 `id`。`id` 可写唯一前缀或后缀，留空表示最近一个任务。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
+stdio 提供 `baton_agents`、`baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；reply 为 `id/msg/timeout`；`baton_agents` 无参数，列出未隐藏的 Agent 及其说明、配置的模型和 effort、是否默认，以及可执行文件缺失等派活会失败的原因；其余任务工具传 `id`。`id` 可写唯一前缀或后缀，留空表示最近一个任务。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
 
 数据默认保存在 `~/.local/share/baton`，可通过 `BATON_HOME` 修改。每个 `tasks/<id>/` 保存原子更新的 `task.json`、原样的 `turn-n.stdout/stderr`、Codex 的 `turn-n.last`、`patch.diff`、`checks/turn-n/` 和 `worker.log`。`request.json` 是启动/续接信箱，`lock` 串行保护同一任务，`worker.pid` 记录启动 PID，`cancel-n` 是取消标记；只有 worker 写 `task.json`。同一个 BATON_HOME 下的 `check-gate.lock` 跨进程串行运行所有检查。
 

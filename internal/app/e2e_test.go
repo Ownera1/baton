@@ -246,7 +246,7 @@ printf 'raw stderr\n' >&2
 	}
 	defer conn.Close()
 	tools, err := conn.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 7 {
+	if err != nil || len(tools.Tools) != 8 {
 		t.Fatalf("MCP tools: %+v %v", tools, err)
 	}
 	out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_result", Arguments: map[string]any{"id": submitted.ID}})
@@ -260,6 +260,50 @@ printf 'raw stderr\n' >&2
 	var mcpResult app.Result
 	if err := json.Unmarshal(b, &mcpResult); err != nil || mcpResult.ID != task.ID || mcpResult.Status != "canceled" {
 		t.Fatalf("MCP JSON: %s %v", b, err)
+	}
+	// Hidden agents are left out of baton_agents and refused over MCP only.
+	exposed := func() map[string]app.AgentInfo {
+		t.Helper()
+		out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_agents", Arguments: map[string]any{}})
+		if err != nil || out.IsError {
+			t.Fatalf("MCP agents: %+v %v", out, err)
+		}
+		b, _ := json.Marshal(out.StructuredContent)
+		var list app.AgentList
+		if err := json.Unmarshal(b, &list); err != nil {
+			t.Fatal(err)
+		}
+		byName := map[string]app.AgentInfo{}
+		for _, a := range list.Agents {
+			byName[a.Name] = a
+		}
+		return byName
+	}
+	if a := exposed()["codex"]; !a.Default || a.Model != "cfg-model" || a.Error != "" || len(exposed()) != 5 {
+		t.Fatalf("exposed agents: %+v", exposed())
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"agents":{"codex":{"model":"cfg-model","hidden":true}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := exposed()["codex"]; ok {
+		t.Fatal("hidden codex listed")
+	}
+	refused := func(tool string, args map[string]any) {
+		t.Helper()
+		out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
+		if err != nil || !out.IsError || !strings.Contains(out.Content[0].(*mcp.TextContent).Text, "hidden") {
+			t.Fatalf("%s with hidden agent: %+v %v", tool, out, err)
+		}
+	}
+	refused("baton_run", map[string]any{"repo": repo, "task": "default agent is hidden"})
+	refused("baton_reply", map[string]any{"id": submitted.ID, "msg": "continue"})
+	cli(&submitted, "ask", "codex", "hidden agents still work on the CLI", "-repo", repo, "-timeout", "20s")
+	cli(&task, "wait", submitted.ID, "-timeout", "20s")
+	if task.Status != "succeeded" {
+		t.Fatalf("CLI with hidden agent: %+v", task)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"agents":{"codex":{"model":"cfg-model"}}}`), 0600); err != nil {
+		t.Fatal(err)
 	}
 	out, err = conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_run", Arguments: map[string]any{"agent": "codex", "repo": repo, "task": "DELAY", "title": "MCP 对话标题", "timeout": "20s", "checks": []string{"test -f result.txt"}}})
 	if err != nil || out.IsError {

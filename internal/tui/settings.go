@@ -70,27 +70,31 @@ func settingsFields() []field {
 			get: func(c app.Config) string { return c.Theme }, set: func(c *app.Config, v string) { c.Theme = v }},
 	}
 	for _, name := range app.Agents {
+		update := func(c *app.Config, edit func(*app.AgentConfig)) {
+			a := c.Agents[name]
+			edit(&a)
+			// Copy on write: saved and draft may share the map.
+			c.Agents = maps.Clone(c.Agents)
+			if c.Agents == nil {
+				c.Agents = map[string]app.AgentConfig{}
+			}
+			c.Agents[name] = a
+		}
 		one := func(key string, options []string, p func(*app.AgentConfig) *string) field {
 			if options != nil {
 				options = append([]string{""}, options...)
 			}
 			return field{agent: name, key: key, options: options,
 				get: func(c app.Config) string { a := c.Agents[name]; return *p(&a) },
-				set: func(c *app.Config, v string) {
-					a := c.Agents[name]
-					*p(&a) = v
-					// Copy on write: saved and draft may share the map.
-					c.Agents = maps.Clone(c.Agents)
-					if c.Agents == nil {
-						c.Agents = map[string]app.AgentConfig{}
-					}
-					c.Agents[name] = a
-				}}
+				set: func(c *app.Config, v string) { update(c, func(a *app.AgentConfig) { *p(a) = v }) }}
 		}
 		fs = append(fs,
 			one("model", nil, func(a *app.AgentConfig) *string { return &a.Model }),
 			one("effort", efforts[name], func(a *app.AgentConfig) *string { return &a.Effort }),
-			one("path", nil, func(a *app.AgentConfig) *string { return &a.Path }))
+			one("path", nil, func(a *app.AgentConfig) *string { return &a.Path }),
+			field{agent: name, key: "hidden", options: []string{"", "true"},
+				get: func(c app.Config) string { return map[bool]string{true: "true"}[c.Agents[name].Hidden] },
+				set: func(c *app.Config, v string) { update(c, func(a *app.AgentConfig) { a.Hidden = v == "true" }) }})
 	}
 	return fs
 }
@@ -119,6 +123,8 @@ func (f field) help() string {
 		return "面板配色。默认跟随终端背景；切换时立即预览，ctrl+s 保存后下次打开也用它。命令行 -theme 优先。"
 	case "model":
 		return fmt.Sprintf("传给 %s 的模型名，原样传入，不校验。命令行 -model 优先；留空时用 %s 自己的配置。", f.agent, f.agent)
+	case "hidden":
+		return fmt.Sprintf("true 时主 Agent 看不到 %s：baton_agents 不列出，MCP 的 baton_run、baton_reply 拒绝它。你在终端里用 CLI 不受影响。", f.agent)
 	case "effort":
 		if f.options == nil {
 			return fmt.Sprintf("推理强度。%s --help 没列出取值，请按 enter 输入。命令行 -effort 优先。", f.agent)
@@ -390,6 +396,12 @@ func (m model) settingsLines(w int) ([]string, []int, int) {
 
 func (m model) fieldValue(f field, v string) string {
 	p := m.palette
+	if f.key == "hidden" {
+		if v == "true" {
+			return p.text(p.ink).Render("隐藏（主 Agent 看不到）")
+		}
+		return p.text(p.faint).Render("默认（暴露给主 Agent）")
+	}
 	if v != "" {
 		return p.text(p.ink).Render(clean(v))
 	}

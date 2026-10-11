@@ -39,6 +39,9 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 		in.Agent = cfg.DefaultAgent()
 	}
 	ac := cfg.Agents[in.Agent]
+	if in.FromMCP && ac.Hidden {
+		return nil, hidden(in.Agent)
+	}
 	in.Model, in.Effort = cmp.Or(in.Model, ac.Model), cmp.Or(in.Effort, ac.Effort)
 	prompt, err := Text(in.Task)
 	if err != nil {
@@ -217,6 +220,9 @@ func (s *Service) Reply(in ReplyRequest) (*Submitted, error) {
 	t, err := s.Status(in.ID)
 	if err != nil {
 		return nil, err
+	}
+	if in.FromMCP && cfg.Agents[t.Agent].Hidden {
+		return nil, hidden(t.Agent)
 	}
 	if t.Status == "queued" || t.Status == "running" || t.Status == "stale" {
 		return nil, fmt.Errorf("cannot reply to a %s task", t.Status)

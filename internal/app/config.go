@@ -20,6 +20,9 @@ type AgentConfig struct {
 	Effort string `json:"effort,omitempty"`
 	// Path is an absolute executable path or a name looked up in PATH.
 	Path string `json:"path,omitempty"`
+	// Hidden keeps the agent out of baton_agents and refuses it over MCP;
+	// the CLI still accepts it.
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // Config is the user-wide config.json. Every field is optional.

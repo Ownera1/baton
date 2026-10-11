@@ -380,6 +380,7 @@ type agentConfig struct {
 	Effort string `json:"effort,omitempty"`
 	Path   string `json:"path,omitempty"` // resolved executable
 	Error  string `json:"error,omitempty"`
+	Hidden bool   `json:"hidden,omitempty"`
 }
 
 // printConfig shows the config file and the defaults each agent gets from it.
@@ -391,7 +392,7 @@ func printConfig(asJSON bool) error {
 	agents := map[string]agentConfig{}
 	for _, name := range app.Agents {
 		ac := cfg.Agents[name]
-		v := agentConfig{Model: ac.Model, Effort: ac.Effort}
+		v := agentConfig{Model: ac.Model, Effort: ac.Effort, Hidden: ac.Hidden}
 		if argv, err := agent.Argv(name, agent.Options{Path: ac.Path}); err != nil {
 			v.Error = err.Error()
 		} else {
@@ -416,7 +417,11 @@ func printConfig(asJSON bool) error {
 	or := func(s string) string { return cmp.Or(s, "默认") }
 	for _, name := range app.Agents {
 		v := agents[name]
-		fmt.Printf("%-7s 模型 %s · effort %s · %s\n", name, or(v.Model), or(v.Effort), cmp.Or(v.Path, v.Error))
+		hidden := ""
+		if v.Hidden {
+			hidden = " · 对主 Agent 隐藏"
+		}
+		fmt.Printf("%-7s 模型 %s · effort %s · %s%s\n", name, or(v.Model), or(v.Effort), cmp.Or(v.Path, v.Error), hidden)
 	}
 	return nil
 }
