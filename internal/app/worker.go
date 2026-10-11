@@ -211,6 +211,7 @@ func (s *Service) Worker(id string) (retErr error) {
 	}
 	t.Verify, err = verify.Run(t.ID, req.Number, snapshot, runDir, filepath.Join(dir, "checks", fmt.Sprintf("turn-%d", req.Number)), checks,
 		req.Timeout, verify.Options{Context: ctx, Limits: limits, Gate: gate})
+	turn.Verify = &t.Verify
 	if err != nil {
 		return err
 	}

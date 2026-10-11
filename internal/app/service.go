@@ -31,6 +31,10 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	if err != nil {
 		return nil, err
 	}
+	title := strings.TrimSpace(in.Title)
+	if title == "" {
+		title = TitleFromPrompt(prompt)
+	}
 	timeout, err := duration(in.Timeout, 30*time.Minute)
 	if err != nil {
 		return nil, err
@@ -60,7 +64,7 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	t := Task{ID: id, Agent: in.Agent, Mode: in.Mode, Repo: info.Root, BaseCommit: info.Head,
+	t := Task{ID: id, Title: title, Agent: in.Agent, Mode: in.Mode, Repo: info.Root, BaseCommit: info.Head,
 		Model: in.Model, Effort: in.Effort, Checks: in.Checks, Status: "queued", Turns: []Turn{},
 		Verify: verify.Result{Status: verify.StatusNone, Checks: []verify.Outcome{}}, CreatedAt: now, UpdatedAt: now}
 	if t.Checks == nil {

@@ -91,13 +91,13 @@ printf 'raw stderr\n' >&2
 		}
 	}
 	var submitted app.Submitted
-	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "make a file", "-check", "test -f result.txt", "-timeout", "20s")
+	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "make a file", "-title", "创建结果文件", "-check", "test -f result.txt", "-timeout", "20s")
 	if submitted.ID == "" || submitted.Status != "queued" {
 		t.Fatal(submitted)
 	}
 	var task app.Task
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
-	if task.Status != "succeeded" || task.Verify.Status != "pass" || task.Verify.Checks[0].ExitCode != 0 {
+	if len(task.Turns) != 1 || task.Title != "创建结果文件" || task.Turns[0].Verify == nil || task.Turns[0].Verify.Status != "pass" || task.Status != "succeeded" || task.Verify.Status != "pass" || task.Verify.Checks[0].ExitCode != 0 {
 		t.Fatalf("task: %+v", task)
 	}
 	var result app.Result
@@ -127,7 +127,7 @@ printf 'raw stderr\n' >&2
 	}
 	cli(&submitted, "reply", submitted.ID, "-msg", "@"+promptPath, "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
-	if task.Status != "succeeded" || len(task.Turns) != 2 || task.Worktree != firstWT || task.Branch != firstBranch || task.SessionID != session || task.Verify.Round != 2 {
+	if len(task.Turns) != 2 || task.Title != "创建结果文件" || task.Turns[0].Verify == nil || task.Turns[0].Verify.Round != 1 || task.Turns[1].Verify == nil || task.Turns[1].Verify.Round != 2 || task.Status != "succeeded" || task.Worktree != firstWT || task.Branch != firstBranch || task.SessionID != session || task.Verify.Round != 2 {
 		t.Fatalf("reply task: %+v", task)
 	}
 	if commits, err := workspace.Git(firstWT, "rev-list", "--count", base+"..HEAD"); err != nil || commits != "2" {
@@ -185,7 +185,7 @@ printf 'raw stderr\n' >&2
 	}
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-mode", "read", "-task", "read repo", "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
-	if task.Status != "succeeded" || task.Worktree != "" || task.Branch != "" || task.Verify.Status != "none" {
+	if task.Title != "read repo" || task.Status != "succeeded" || task.Worktree != "" || task.Branch != "" || task.Verify.Status != "none" {
 		t.Fatalf("read task: %+v", task)
 	}
 	if source, err := workspace.Inspect(repo); err != nil || source.Dirty {
@@ -240,7 +240,7 @@ printf 'raw stderr\n' >&2
 	if err := json.Unmarshal(b, &mcpResult); err != nil || mcpResult.ID != task.ID || mcpResult.Status != "canceled" {
 		t.Fatalf("MCP JSON: %s %v", b, err)
 	}
-	out, err = conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_run", Arguments: map[string]any{"agent": "codex", "repo": repo, "task": "DELAY", "timeout": "20s", "checks": []string{"test -f result.txt"}}})
+	out, err = conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_run", Arguments: map[string]any{"agent": "codex", "repo": repo, "task": "DELAY", "title": "MCP 对话标题", "timeout": "20s", "checks": []string{"test -f result.txt"}}})
 	if err != nil || out.IsError {
 		t.Fatalf("MCP run: %+v %v", out, err)
 	}
@@ -255,7 +255,7 @@ printf 'raw stderr\n' >&2
 		t.Fatal(err)
 	}
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
-	if task.Status != "succeeded" || task.Verify.Status != "pass" {
+	if task.Title != "MCP 对话标题" || task.Status != "succeeded" || task.Verify.Status != "pass" {
 		t.Fatalf("worker stopped after MCP disconnected: %+v", task)
 	}
 }

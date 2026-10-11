@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
 type Event struct {
-	Kind string // message, tool, or error
-	Text string
+	Kind     string // message, tool, or error
+	Text     string
+	Category string // read, search, edit, command, message, or error
+	Right    string // exit code and/or duration, when supplied by the agent
 }
 
 // Events summarizes a live stdout snapshot. Bad records and partial lines are
@@ -41,8 +44,66 @@ func eventLines(b []byte, visit func([]byte)) {
 func addEvent(events *[]Event, kind, text string) {
 	text = strings.Join(strings.Fields(text), " ")
 	if text != "" {
-		*events = append(*events, Event{Kind: kind, Text: text})
+		category := kind
+		if kind == "tool" {
+			category = toolCategory(text)
+		}
+		*events = append(*events, Event{Kind: kind, Text: text, Category: category})
 	}
+}
+
+func toolCategory(text string) string {
+	words := strings.Fields(strings.ToLower(strings.TrimPrefix(text, "$ ")))
+	if len(words) == 0 {
+		return "command"
+	}
+	name := filepath.Base(words[0])
+	if name == "sh" || name == "bash" || name == "zsh" {
+		for i, word := range words {
+			if (word == "-c" || word == "-lc") && i+1 < len(words) {
+				return toolCategory(strings.Trim(strings.Join(words[i+1:], " "), "'\""))
+			}
+		}
+	}
+	switch {
+	case strings.Contains(name, "edit"), strings.Contains(name, "write"), strings.Contains(name, "patch"), name == "update", name == "add", name == "delete":
+		return "edit"
+	case strings.Contains(name, "grep"), strings.Contains(name, "search"), strings.Contains(name, "find"), name == "rg", name == "glob":
+		return "search"
+	case strings.Contains(name, "read"), strings.Contains(name, "view_file"), strings.Contains(name, "list"), name == "cat", name == "ls", name == "head", name == "tail", name == "sed":
+		return "read"
+	default:
+		return "command"
+	}
+}
+
+func toolRight(raw json.RawMessage) string {
+	var meta struct {
+		Exit      *int     `json:"exit_code"`
+		CamelExit *int     `json:"exitCode"`
+		MS        *float64 `json:"duration_ms"`
+		CamelMS   *float64 `json:"durationMs"`
+		Seconds   *float64 `json:"duration_seconds"`
+	}
+	if json.Unmarshal(raw, &meta) != nil {
+		return ""
+	}
+	var parts []string
+	if meta.Exit == nil {
+		meta.Exit = meta.CamelExit
+	}
+	if meta.Exit != nil {
+		parts = append(parts, fmt.Sprintf("exit %d", *meta.Exit))
+	}
+	if meta.MS == nil {
+		meta.MS = meta.CamelMS
+	}
+	if meta.MS != nil {
+		parts = append(parts, fmt.Sprintf("%.1fs", *meta.MS/1000))
+	} else if meta.Seconds != nil {
+		parts = append(parts, fmt.Sprintf("%.1fs", *meta.Seconds))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func toolText(name string, input json.RawMessage) string {
@@ -52,7 +113,7 @@ func toolText(name string, input json.RawMessage) string {
 	var args map[string]json.RawMessage
 	_ = json.Unmarshal(input, &args)
 	parts := []string{name}
-	for _, key := range []string{"command", "CommandLine", "file_path", "target_file", "AbsolutePath", "path", "target_directory", "directory", "DirectoryPath", "SearchDirectory", "pattern", "SearchPattern", "Pattern", "glob", "query"} {
+	for _, key := range []string{"command", "cmd", "CommandLine", "file_path", "target_file", "AbsolutePath", "path", "target_directory", "directory", "DirectoryPath", "SearchDirectory", "pattern", "SearchPattern", "Pattern", "glob", "query"} {
 		var value string
 		if json.Unmarshal(args[key], &value) == nil && value != "" {
 			parts = append(parts, value)
@@ -63,16 +124,25 @@ func toolText(name string, input json.RawMessage) string {
 
 func codexEvents(b []byte) []Event {
 	var events []Event
+	items := map[string]int{}
 	eventLines(b, func(raw []byte) {
 		var e struct {
-			Type string
-			Item struct {
-				Type, Command, Text string
-				ExitCode            *int `json:"exit_code"`
-				Changes             []struct{ Kind, Path string }
+			Type  string
+			Error struct{ Message string }
+			Item  struct {
+				ID, Type, Command, Text string
+				ExitCode                *int `json:"exit_code"`
+				Changes                 []struct{ Kind, Path string }
 			}
 		}
-		if json.Unmarshal(raw, &e) != nil || (e.Type != "item.started" && e.Type != "item.completed") {
+		if json.Unmarshal(raw, &e) != nil {
+			return
+		}
+		if e.Type == "error" || e.Type == "turn.failed" {
+			addEvent(&events, "error", e.Error.Message)
+			return
+		}
+		if e.Type != "item.started" && e.Type != "item.completed" {
 			return
 		}
 		switch e.Item.Type {
@@ -80,14 +150,25 @@ func codexEvents(b []byte) []Event {
 			if e.Item.Command == "" {
 				return
 			}
-			text := "$ " + e.Item.Command
-			if e.Type == "item.completed" && e.Item.ExitCode != nil {
-				text += fmt.Sprintf(" (exit %d)", *e.Item.ExitCode)
+			addEvent(&events, "tool", "$ "+e.Item.Command)
+			var record struct{ Item json.RawMessage }
+			_ = json.Unmarshal(raw, &record)
+			events[len(events)-1].Right = toolRight(record.Item)
+			if e.Item.ID != "" {
+				if i, ok := items[e.Item.ID]; ok {
+					events[i] = events[len(events)-1]
+					events = events[:len(events)-1]
+				} else {
+					items[e.Item.ID] = len(events) - 1
+				}
 			}
-			addEvent(&events, "tool", text)
 		case "file_change":
 			for _, c := range e.Item.Changes {
+				if strings.TrimSpace(c.Kind+c.Path) == "" {
+					continue
+				}
 				addEvent(&events, "tool", c.Kind+" "+c.Path)
+				events[len(events)-1].Category = "edit"
 			}
 		case "agent_message":
 			addEvent(&events, "message", e.Item.Text)
@@ -98,23 +179,39 @@ func codexEvents(b []byte) []Event {
 
 func claudeEvents(b []byte) []Event {
 	var events []Event
+	tools := map[string]int{}
 	eventLines(b, func(raw []byte) {
 		var e struct {
-			Type    string
-			Message struct {
+			Type          string
+			ToolUseResult json.RawMessage `json:"tool_use_result"`
+			Message       struct {
 				Content []struct {
-					Type, Name, Text string
-					Input            json.RawMessage
+					ID, Type, Name, Text string
+					ToolUseID            string `json:"tool_use_id"`
+					IsError              bool   `json:"is_error"`
+					Content              json.RawMessage
+					Input                json.RawMessage
 				}
 			}
 		}
-		if json.Unmarshal(raw, &e) != nil || e.Type != "assistant" {
+		if json.Unmarshal(raw, &e) != nil || (e.Type != "assistant" && e.Type != "user") {
 			return
 		}
 		for _, c := range e.Message.Content {
 			switch c.Type {
 			case "tool_use":
+				before := len(events)
 				addEvent(&events, "tool", toolText(c.Name, c.Input))
+				if len(events) > before {
+					tools[c.ID] = before
+				}
+			case "tool_result":
+				if i, ok := tools[c.ToolUseID]; ok {
+					events[i].Right = toolRight(e.ToolUseResult)
+					if c.IsError {
+						addEvent(&events, "error", events[i].Text+" failed: "+string(c.Content))
+					}
+				}
 			case "text":
 				addEvent(&events, "message", c.Text)
 			}
@@ -150,6 +247,14 @@ func grokEvents(b []byte) []Event {
 			tools[e.ToolCallID] = summary
 			addEvent(&events, "tool", summary)
 		case "tool_call_update":
+			if right := toolRight(e.RawOutput); right != "" {
+				for i := len(events) - 1; i >= 0; i-- {
+					if events[i].Text == tools[e.ToolCallID] {
+						events[i].Right = right
+						break
+					}
+				}
+			}
 			if e.Status == "failed" {
 				summary := tools[e.ToolCallID]
 				if summary == "" {
@@ -197,11 +302,19 @@ func agyEvents(b []byte) []Event {
 		flush()
 		if e.Event == "step_update" && s.Type == "tool" {
 			summary := toolText(s.ToolName, s.ToolInfo.Parameters)
+			before := len(events)
 			switch s.State {
 			case "DONE":
 				addEvent(&events, "tool", summary)
 			case "ERROR":
 				addEvent(&events, "error", summary+" failed: "+string(s.ToolInfo.Error))
+			}
+			if len(events) > before {
+				var record struct {
+					Step json.RawMessage `json:"step_update"`
+				}
+				_ = json.Unmarshal(raw, &record)
+				events[len(events)-1].Right = toolRight(record.Step)
 			}
 		}
 	})
@@ -211,18 +324,35 @@ func agyEvents(b []byte) []Event {
 
 func piEvents(b []byte) []Event {
 	var events []Event
+	tools := map[string]int{}
 	eventLines(b, func(raw []byte) {
 		var e struct {
-			Type, ToolName string
-			Args           json.RawMessage
-			Message        json.RawMessage
+			Type, ToolName, ToolCallID string
+			Args                       json.RawMessage
+			Message                    json.RawMessage
+			Result                     json.RawMessage
+			IsError                    bool
 		}
 		if json.Unmarshal(raw, &e) != nil {
 			return
 		}
 		switch e.Type {
 		case "tool_execution_start":
+			before := len(events)
 			addEvent(&events, "tool", toolText(e.ToolName, e.Args))
+			if len(events) > before {
+				tools[e.ToolCallID] = before
+			}
+		case "tool_execution_end":
+			if i, ok := tools[e.ToolCallID]; ok {
+				events[i].Right = toolRight(e.Result)
+				if events[i].Right == "" {
+					events[i].Right = toolRight(raw)
+				}
+			}
+			if e.IsError {
+				addEvent(&events, "error", e.ToolName+" failed: "+string(e.Result))
+			}
 		case "message_end":
 			m, err := assistant(e.Message)
 			if err != nil || m == nil {

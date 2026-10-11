@@ -58,10 +58,15 @@ func run(args []string) error {
 		return svc.Worker(args[1])
 	}
 	if args[0] == "tui" {
-		if len(args) != 1 {
-			return fmt.Errorf("tui takes no arguments")
+		fs := flag.NewFlagSet("tui", flag.ContinueOnError)
+		theme := fs.String("theme", "auto", "auto|light|dark")
+		if err := fs.Parse(args[1:]); err != nil {
+			return err
 		}
-		return tui.Run(svc)
+		if fs.NArg() != 0 {
+			return fmt.Errorf("tui takes no positional arguments")
+		}
+		return tui.Run(svc, *theme)
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	var value any
@@ -72,6 +77,7 @@ func run(args []string) error {
 		fs.StringVar(&req.Agent, "agent", "", "codex|claude|grok|agy|pi")
 		fs.StringVar(&req.Repo, "repo", "", "git repository")
 		fs.StringVar(&req.Task, "task", "", "text or @file")
+		fs.StringVar(&req.Title, "title", "", "conversation title (inferred from task when omitted)")
 		fs.StringVar(&req.Mode, "mode", "write", "read|write")
 		fs.StringVar(&req.Model, "model", "", "model")
 		fs.StringVar(&req.Effort, "effort", "", "reasoning effort")

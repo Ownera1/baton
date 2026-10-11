@@ -16,10 +16,12 @@ type Turn struct {
 	Usage     json.RawMessage `json:"usage,omitempty"`
 	CostUSD   *float64        `json:"cost_usd,omitempty"`
 	Error     string          `json:"error,omitempty"`
+	Verify    *verify.Result  `json:"verify,omitempty"`
 }
 
 type Task struct {
 	ID         string        `json:"id"`
+	Title      string        `json:"title,omitempty"`
 	Agent      string        `json:"agent"`
 	Mode       string        `json:"mode"`
 	Repo       string        `json:"repo"`
@@ -42,6 +44,7 @@ type Task struct {
 }
 
 type RunRequest struct {
+	Title   string   `json:"title,omitempty" jsonschema:"Conversation title supplied by the dispatching agent; inferred from task when omitted"`
 	Agent   string   `json:"agent"`
 	Repo    string   `json:"repo"`
 	Task    string   `json:"task"`
