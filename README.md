@@ -17,6 +17,7 @@ bin/baton result <id> -json
 bin/baton reply <id> -msg '再补上边界处理' -timeout 30m
 bin/baton cancel <id>
 bin/baton list -json
+bin/baton tui                # 每秒刷新的任务面板
 
 bin/baton run -agent claude -repo /path/to/repo -mode read -task @question.txt
 ```
@@ -26,12 +27,16 @@ bin/baton run -agent claude -repo /path/to/repo -mode read -task @question.txt
 | Agent | read | write | 续接 | 输出 |
 |---|---|---|---|---|
 | codex | read-only | workspace-write | exec resume thread_id | JSONL |
-| claude | permission-mode plan | acceptEdits | --resume session_id | JSON |
-| grok | permission-mode plan | permission-mode auto + --sandbox workspace | -r sessionId | JSON |
-| agy | mode plan | accept-edits | --conversation conversation_id | JSON |
+| claude | permission-mode plan | acceptEdits | --resume session_id | --output-format stream-json --verbose |
+| grok | permission-mode plan + --tools read_file,list_dir,grep | permission-mode auto + --sandbox workspace | -r sessionId | --output-format streaming-json |
+| agy | mode plan | accept-edits | --conversation conversation_id | --output-format stream-json |
 | pi | read,grep,find,ls | 默认工具 | --session id | JSONL |
 
 Pi 始终加 `-ne`，禁用用户扩展。Codex resume 没有 `-s`/`-C`，使用 `-c sandbox_mode="…"` 和工作目录保留原模式。可执行文件通过 `exec.LookPath` 查找并直接执行，忽略 shell alias；stdin 为 `/dev/null`。opencode 暂不支持。
+
+`baton tui` 读取当前 `BATON_HOME`，每秒刷新任务列表和选中任务最新一轮 stdout 的最后 40 条事件。宽屏左右分栏，窄屏上下堆叠；列表显示短 ID、Agent、模式、状态、轮数、当前轮耗时、检查状态和仓库名。详情包含 prompt、实时工具/消息/错误、最终回复、diffstat、检查退出码、警告和当前轮成本。`↑/↓` 或 `k/j` 选择任务；`tab` 切换列表/详情焦点，详情中用同样的方向键滚动，也支持 PgUp/PgDown；`c` 发起取消，必须再按 `y` 确认，其他键关闭确认；`q` 或 `ctrl+c` 退出。退出面板不会停止任务。除确认取消外，面板只读，不写任务文件。
+
+损坏或缺失的任务文件会显示读取错误并继续刷新；列表读取失败时保留上次成功的列表。未写完的 JSONL 行会暂时忽略，下一次刷新再解析。grok read 只开放三个只读工具，避免 plan 模式中的终端工具尝试取消整轮任务；write 的 auto + workspace sandbox 保持原样。
 
 write 要求源仓库干净且已有 HEAD。worker 从记录的 HEAD 创建 `<task>/wt` 和 `baton/<id>` 分支；每轮 Agent 结束后，将改动提交到这条分支，生成相对初始 HEAD 的累计 `patch.diff`。自动提交关闭 Git hooks 和签名，避免后台交互和 hook 的额外动作；Git 作者身份沿用环境或仓库配置。然后逐条运行检查，记录对应 commit、退出码、耗时和日志。没有检查时为 `none`；资源监测不可用、内存超限、检查超时、锁等待超时或工具缺失时为 `unavailable`。检查失败或 unavailable 使任务为 `failed`。
 

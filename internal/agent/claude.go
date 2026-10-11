@@ -10,7 +10,7 @@ func claudeArgv(o Options) []string {
 	if o.Mode == "write" {
 		mode = "acceptEdits"
 	}
-	a := []string{"-p", "--output-format", "json", "--permission-mode", mode}
+	a := []string{"-p", "--output-format", "stream-json", "--verbose", "--permission-mode", mode}
 	if o.Model != "" {
 		a = append(a, "--model", o.Model)
 	}
@@ -24,6 +24,27 @@ func claudeArgv(o Options) []string {
 }
 
 func parseClaude(b []byte) (Result, error) {
+	var result json.RawMessage
+	err := jsonLines(b, func(raw json.RawMessage) error {
+		var e struct{ Type string }
+		if err := json.Unmarshal(raw, &e); err != nil {
+			return err
+		}
+		if e.Type == "result" {
+			result = raw
+		}
+		return nil
+	})
+	if err != nil {
+		return Result{}, err
+	}
+	if result == nil {
+		return Result{}, fmt.Errorf("missing result")
+	}
+	return parseClaudeResult(result)
+}
+
+func parseClaudeResult(b []byte) (Result, error) {
 	var e struct {
 		Result            string
 		SessionID         string `json:"session_id"`

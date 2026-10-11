@@ -3,6 +3,7 @@ package main
 import (
 	"baton/internal/app"
 	"baton/internal/mcpserver"
+	"baton/internal/tui"
 	"context"
 	"encoding/json"
 	"flag"
@@ -34,7 +35,7 @@ func emit(value any) error {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: baton run|status|wait|result|reply|cancel|list|mcp|version")
+		return fmt.Errorf("usage: baton run|status|wait|result|reply|cancel|list|tui|mcp|version")
 	}
 	if args[0] == "version" {
 		fmt.Println(version)
@@ -55,6 +56,12 @@ func run(args []string) error {
 			return fmt.Errorf("worker requires task id")
 		}
 		return svc.Worker(args[1])
+	}
+	if args[0] == "tui" {
+		if len(args) != 1 {
+			return fmt.Errorf("tui takes no arguments")
+		}
+		return tui.Run(svc)
 	}
 	fs := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	var value any

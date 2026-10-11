@@ -45,7 +45,7 @@ func TestEndToEnd(t *testing.T) {
 	t.Setenv("GIT_COMMITTER_EMAIL", "baton@example.invalid")
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("FIXTURE_PATH", filepath.Join(root, "testdata", "fixtures", "codex.exec.jsonl"))
+	t.Setenv("FIXTURE_PATH", filepath.Join(root, "testdata", "fixtures", "stream", "codex.jsonl"))
 	argvLog := filepath.Join(dir, "argv.log")
 	t.Setenv("ARGV_LOG", argvLog)
 	// Only this fake codex is executed; no provider or real agent is used.
@@ -102,7 +102,7 @@ printf 'raw stderr\n' >&2
 	}
 	var result app.Result
 	cli(&result, "result", submitted.ID, "-json")
-	if result.FinalText != "OK" || result.SessionID != "01a12a19-a475-7021-822e-76071a979957" || result.Branch != "baton/"+submitted.ID || result.BaseCommit != base || result.Diffstat == "" {
+	if result.FinalText != "baton-fixture" || result.SessionID != "01a12aa4-3781-7181-a0c4-33d76e940f0a" || result.Branch != "baton/"+submitted.ID || result.BaseCommit != base || result.Diffstat == "" {
 		t.Fatalf("result: %+v", result)
 	}
 	patch, err := os.ReadFile(result.PatchPath)
