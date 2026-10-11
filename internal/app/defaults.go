@@ -18,14 +18,6 @@ const DefaultTimeout = 2 * time.Hour
 // Agents lists the supported sub-agents, for CLI argument detection.
 var Agents = []string{"codex", "claude", "grok", "agy", "pi"}
 
-// DefaultAgent is BATON_AGENT, or codex.
-func DefaultAgent() string {
-	if a := strings.TrimSpace(os.Getenv("BATON_AGENT")); a != "" {
-		return a
-	}
-	return "codex"
-}
-
 var makeTest = regexp.MustCompile(`(?m)^test\s*:`)
 
 // DetectChecks returns the project's own test commands. A .baton/checks file

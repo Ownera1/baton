@@ -1,9 +1,11 @@
 package main
 
 import (
+	"baton/internal/agent"
 	"baton/internal/app"
 	"baton/internal/mcpserver"
 	"baton/internal/tui"
+	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -21,15 +23,16 @@ var version = "dev"
 
 const usage = `用法：
   baton                          打开面板（同 baton tui）
-  baton do [agent] <任务>         派出改代码的任务，默认 codex
+  baton do [agent] <任务>         派出改代码的任务，默认 codex（可在配置中修改）
   baton ask [agent] <问题>        派出只读任务
   baton reply [任务] <消息>       在同一会话里继续
   baton wait|result|status|cancel [任务]
-  baton list | tui | mcp | version
+  baton list | tui | config | mcp | version
 
 <任务> 可以是文字、@文件，或 - 从标准输入读；[任务] 默认最近一个，可写 ID 的前缀或后缀。
 常用参数（可写在任意位置）：-w 等完成并打印结果  -check 命令  -no-check  -title 标题
-  -repo 路径（默认当前目录）  -model  -effort  -timeout（默认 2h）  -json`
+  -repo 路径（默认当前目录）  -model  -effort  -timeout（默认 2h）  -json
+各 Agent 的默认模型、effort、可执行文件写在 ~/.config/baton/config.json，baton config 查看。`
 
 type checks []string
 
@@ -129,13 +132,13 @@ func run(args []string) error {
 	case "do", "ask", "run":
 		var req app.RunRequest
 		var commands checks
-		fs.StringVar(&req.Agent, "agent", "", "codex|claude|grok|agy|pi (default codex, or BATON_AGENT)")
+		fs.StringVar(&req.Agent, "agent", "", "codex|claude|grok|agy|pi (default: BATON_AGENT, config, then codex)")
 		fs.StringVar(&req.Repo, "repo", "", "git repository (default: current directory)")
 		fs.StringVar(&req.Task, "task", "", "text or @file")
 		fs.StringVar(&req.Title, "title", "", "conversation title (inferred from task when omitted)")
-		fs.StringVar(&req.Model, "model", "", "model (default: the agent's own config)")
-		fs.StringVar(&req.Effort, "effort", "", "reasoning effort (default: the agent's own config)")
-		fs.StringVar(&req.Timeout, "timeout", "", "turn timeout, including checks (default 2h)")
+		fs.StringVar(&req.Model, "model", "", "model (default: Baton config, then the agent's own config)")
+		fs.StringVar(&req.Effort, "effort", "", "reasoning effort (default: Baton config, then the agent's own config)")
+		fs.StringVar(&req.Timeout, "timeout", "", "turn timeout, including checks (default: config, then 2h)")
 		fs.Var(&commands, "check", "check command (repeatable; default: detected from the project)")
 		fs.BoolVar(&req.NoChecks, "no-check", false, "run no checks")
 		wait := fs.Bool("w", false, "wait for the task and print its result")
@@ -171,7 +174,7 @@ func run(args []string) error {
 	case "reply":
 		var msg, timeout string
 		fs.StringVar(&msg, "msg", "", "text or @file")
-		fs.StringVar(&timeout, "timeout", "", "turn timeout (default 2h)")
+		fs.StringVar(&timeout, "timeout", "", "turn timeout (default: config, then 2h)")
 		wait := fs.Bool("w", false, "wait for the turn and print its result")
 		pos, err := parse(fs, args[1:])
 		if err != nil {
@@ -244,6 +247,11 @@ func run(args []string) error {
 			fmt.Println(line(t))
 			return nil
 		}
+	case "config":
+		if _, err := parse(fs, args[1:]); err != nil {
+			return err
+		}
+		return printConfig(*asJSON)
 	case "list", "ls":
 		if _, err := parse(fs, args[1:]); err != nil {
 			return err
@@ -355,4 +363,50 @@ func printResult(r *app.Result) {
 	if r.FinalText != "" {
 		fmt.Println("\n" + r.FinalText)
 	}
+}
+
+type agentConfig struct {
+	Model  string `json:"model,omitempty"`
+	Effort string `json:"effort,omitempty"`
+	Path   string `json:"path,omitempty"` // resolved executable
+	Error  string `json:"error,omitempty"`
+}
+
+// printConfig shows the config file and the defaults each agent gets from it.
+func printConfig(asJSON bool) error {
+	cfg, path, exists, err := app.LoadConfig()
+	if err != nil {
+		return err
+	}
+	agents := map[string]agentConfig{}
+	for _, name := range app.Agents {
+		ac := cfg.Agents[name]
+		v := agentConfig{Model: ac.Model, Effort: ac.Effort}
+		if argv, err := agent.Argv(name, agent.Options{Path: ac.Path}); err != nil {
+			v.Error = err.Error()
+		} else {
+			v.Path = argv[0]
+		}
+		agents[name] = v
+	}
+	if asJSON {
+		return emit(map[string]any{"path": path, "exists": exists, "agent": cfg.DefaultAgent(),
+			"timeout": cfg.TurnTimeout().String(), "agents": agents})
+	}
+	note := ""
+	if !exists {
+		note = "（不存在，使用默认值）"
+	}
+	fmt.Printf("配置 %s%s\n", path, note)
+	source := ""
+	if os.Getenv("BATON_AGENT") != "" {
+		source = "（BATON_AGENT）"
+	}
+	fmt.Printf("默认 Agent %s%s · 超时 %s\n", cfg.DefaultAgent(), source, cfg.TurnTimeout())
+	or := func(s string) string { return cmp.Or(s, "默认") }
+	for _, name := range app.Agents {
+		v := agents[name]
+		fmt.Printf("%-7s 模型 %s · effort %s · %s\n", name, or(v.Model), or(v.Effort), cmp.Or(v.Path, v.Error))
+	}
+	return nil
 }

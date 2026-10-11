@@ -20,17 +20,36 @@ git diff | baton ask 评审这段改动          # 任务文字也可以从管�
 baton reply 再补上边界处理                 # 继续最近一个任务的同一会话
 baton wait                                # 等最近一个任务；也可写 ID 后 8 位
 baton result 2fa5f633                     # 结果、分支、检查、diffstat、最终回复
+baton config                              # 配置文件位置，以及各 Agent 实际用的模型、effort、可执行文件
 baton                                     # 打开面板（同 baton tui）
 ```
 
 | 默认值 | 说明 |
 |---|---|
-| Agent | `codex`；用 `BATON_AGENT` 改，或在任务前写 `claude`、`grok`、`agy`、`pi` |
+| Agent | `codex`；用配置的 `agent` 或 `BATON_AGENT` 改，或在任务前写 `claude`、`grok`、`agy`、`pi` |
 | 仓库 | 当前目录所在的 git 仓库；`-repo` 指定其他仓库。MCP 默认取服务启动目录 |
-| 模型 / effort | 用各 Agent 自己的配置；`-model`、`-effort` 只在需要时覆盖 |
+| 模型 / effort | 配置的 `agents.<名字>`，没有就用各 Agent 自己的配置；`-model`、`-effort` 只在需要时覆盖 |
 | 检查（仅改代码任务） | 依次查找 `.baton/checks`（一行一条命令，`#` 注释，空文件表示不检查）、`go.mod`（`go vet` + `go test`）、`Cargo.toml`（`cargo test`）、Makefile 的 `test` 目标。npm 项目不自动推断：worktree 里没有 `node_modules`，请写进 `.baton/checks`。`-check` 指定后不再推断，`-no-check` 跳过检查 |
 | 任务 | 不写就是最近一个；写完整 ID、唯一前缀或后缀都行 |
-| 超时 | 单轮 2 小时，包含 Agent 和检查时间 |
+| 超时 | 单轮 2 小时，包含 Agent 和检查时间；配置的 `timeout` 可改 |
+
+### 配置
+
+`~/.config/baton/config.json`（`XDG_CONFIG_HOME` 或 `BATON_CONFIG_DIR` 可改位置），每项都可省略，文件不存在时全用默认值：
+
+```json
+{
+  "agent": "codex",
+  "timeout": "2h",
+  "agents": {
+    "codex":  { "model": "gpt-5.5", "effort": "high" },
+    "claude": { "model": "opus", "effort": "xhigh" },
+    "grok":   { "path": "/opt/homebrew/bin/grok" }
+  }
+}
+```
+
+优先级：命令行或 MCP 参数 > `BATON_AGENT`（仅 Agent）> 配置 > 内置默认。`effort` 原样传给 Agent（codex 为 `model_reasoning_effort`，pi 为 `--thinking`），取值以各 Agent 为准。`path` 写绝对路径或 PATH 里的命令名。配置在派活时读取，模型、effort、路径写入任务，`reply` 沿用，之后改配置不影响已有对话；MCP 每次派活重新读取，无需重启。未知字段、未知 Agent 名或无法解析的超时会直接报错，不会悄悄回退。
 
 参数可以写在任意位置；任务文字以 `-` 开头时放在 `--` 之后。输出默认给人看，加 `-json` 输出结构化结果。`-w` 等待完成并打印结果，任务失败时退出码非零；Ctrl-C 只停止等待，任务继续。`baton run -agent … -repo … -task …` 等旧写法继续可用。
 
@@ -44,7 +63,7 @@ baton                                     # 打开面板（同 baton tui）
 | agy | mode plan | accept-edits | --conversation conversation_id | --output-format stream-json |
 | pi | read,grep,find,ls | 默认工具 | --session id | JSONL |
 
-Pi 始终加 `-ne`，禁用用户扩展。Codex resume 没有 `-s`/`-C`，使用 `-c sandbox_mode="…"` 和工作目录保留原模式。可执行文件通过 `exec.LookPath` 查找并直接执行，忽略 shell alias；stdin 为 `/dev/null`。opencode 暂不支持。
+Pi 始终加 `-ne`，禁用用户扩展。Codex resume 没有 `-s`/`-C`，使用 `-c sandbox_mode="…"` 和工作目录保留原模式。可执行文件取配置的 `path`，否则通过 `exec.LookPath` 查找，直接执行，忽略 shell alias；stdin 为 `/dev/null`。opencode 暂不支持。
 
 `baton tui -theme auto|light|dark` 读取当前 `BATON_HOME`，默认 `auto` 根据终端背景选择浅色或深色。左栏按需要关注、进行中、已完成分组，显示标题、耗时和检查进度；详情先显示状态摘要、检查标签、改动统计及失败诊断，再进入四个标签页：历轮对话（glamour Markdown）、最新轮全部事件、着色 `patch.diff`、检查及失败输出末尾最多 12 行。改动最多显示 2000 行，超过会标明截断；只读任务显示没有改动。新轮次会保存独立检查结果，旧轮次缺少记录时显示“检查结果未记录”。
 

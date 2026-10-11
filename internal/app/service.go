@@ -4,6 +4,7 @@ import (
 	"baton/internal/agent"
 	"baton/internal/verify"
 	"baton/internal/workspace"
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -30,9 +31,15 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 			return nil, err
 		}
 	}
-	if in.Agent == "" {
-		in.Agent = DefaultAgent()
+	cfg, _, _, err := LoadConfig()
+	if err != nil {
+		return nil, err
 	}
+	if in.Agent == "" {
+		in.Agent = cfg.DefaultAgent()
+	}
+	ac := cfg.Agents[in.Agent]
+	in.Model, in.Effort = cmp.Or(in.Model, ac.Model), cmp.Or(in.Effort, ac.Effort)
 	prompt, err := Text(in.Task)
 	if err != nil {
 		return nil, err
@@ -41,11 +48,11 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	if title == "" {
 		title = TitleFromPrompt(prompt)
 	}
-	timeout, err := duration(in.Timeout, DefaultTimeout)
+	timeout, err := duration(in.Timeout, cfg.TurnTimeout())
 	if err != nil {
 		return nil, err
 	}
-	if _, err := agent.Argv(in.Agent, agent.Options{Mode: in.Mode}); err != nil {
+	if _, err := agent.Argv(in.Agent, agent.Options{Mode: in.Mode, Path: ac.Path}); err != nil {
 		return nil, err
 	}
 	info, err := workspace.Inspect(in.Repo)
@@ -77,7 +84,7 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	}
 	now := time.Now().UTC()
 	t := Task{ID: id, Title: title, Agent: in.Agent, Mode: in.Mode, Repo: info.Root, BaseCommit: info.Head,
-		Model: in.Model, Effort: in.Effort, Checks: in.Checks, Status: "queued", Turns: []Turn{},
+		AgentPath: ac.Path, Model: in.Model, Effort: in.Effort, Checks: in.Checks, Status: "queued", Turns: []Turn{},
 		Verify: verify.Result{Status: verify.StatusNone, Checks: []verify.Outcome{}}, CreatedAt: now, UpdatedAt: now}
 	if t.Checks == nil {
 		t.Checks = []string{}
@@ -184,7 +191,11 @@ func (s *Service) Reply(in ReplyRequest) (*Submitted, error) {
 	if err != nil {
 		return nil, err
 	}
-	timeout, err := duration(in.Timeout, DefaultTimeout)
+	cfg, _, _, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	timeout, err := duration(in.Timeout, cfg.TurnTimeout())
 	if err != nil {
 		return nil, err
 	}

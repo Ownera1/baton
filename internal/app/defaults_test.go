@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDetectChecks(t *testing.T) {
@@ -61,5 +62,43 @@ func TestResolve(t *testing.T) {
 	}
 	if _, err := s.Resolve("ffff"); err == nil {
 		t.Error("unknown ref must fail")
+	}
+}
+
+func TestLoadConfig(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BATON_CONFIG_DIR", dir)
+	t.Setenv("BATON_AGENT", "")
+	if c, _, exists, err := LoadConfig(); err != nil || exists || c.DefaultAgent() != "codex" || c.TurnTimeout() != DefaultTimeout {
+		t.Fatalf("missing file: %+v %v %v", c, exists, err)
+	}
+	write := func(body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(`{"agent":"claude","timeout":"30m","agents":{"claude":{"model":"opus","effort":"high","path":"/opt/claude"},"pi":{"path":"pi-dev"}}}`)
+	c, _, exists, err := LoadConfig()
+	if err != nil || !exists || c.DefaultAgent() != "claude" || c.TurnTimeout() != 30*time.Minute || c.Agents["claude"] != (AgentConfig{"opus", "high", "/opt/claude"}) {
+		t.Fatalf("valid file: %+v %v", c, err)
+	}
+	t.Setenv("BATON_AGENT", "grok")
+	if c.DefaultAgent() != "grok" {
+		t.Error("BATON_AGENT must override the config")
+	}
+	for _, body := range []string{
+		`{"agent":"gpt"}`,
+		`{"timeout":"soon"}`,
+		`{"agents":{"cursor":{}}}`,
+		`{"agents":{"codex":{"modle":"x"}}}`,
+		`{"agents":{"codex":{"path":"bin/codex"}}}`,
+		`{} {}`,
+		`not json`,
+	} {
+		write(body)
+		if _, _, _, err := LoadConfig(); err == nil {
+			t.Errorf("%s: want error", body)
+		}
 	}
 }

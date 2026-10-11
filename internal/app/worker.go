@@ -144,7 +144,7 @@ func (s *Service) Worker(id string) (retErr error) {
 		prefix = "你在隔离的 git worktree 里工作，不要 push，不要切换分支；结束时用几句话总结改了什么、怎么验证的。\n\n"
 	}
 	lastFile := filepath.Join(dir, fmt.Sprintf("turn-%d.last", req.Number))
-	argv, err := agent.Argv(t.Agent, agent.Options{Mode: t.Mode, Dir: runDir, Prompt: prefix + req.Prompt,
+	argv, err := agent.Argv(t.Agent, agent.Options{Path: t.AgentPath, Mode: t.Mode, Dir: runDir, Prompt: prefix + req.Prompt,
 		Model: t.Model, Effort: t.Effort, SessionID: t.SessionID, LastFile: lastFile})
 	if err != nil {
 		return err
