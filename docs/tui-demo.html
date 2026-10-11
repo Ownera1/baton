@@ -401,7 +401,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       check: (v) => (!v || durationOK(v) ? "" : "格式如 90m、2h、1h30m"),
       shown: (v) => v || `<span class="def">默认（2h）</span>`,
       desc: "单轮上限，包含 Agent 和检查时间。命令行 <code>-timeout</code> 优先。" },
-    { g: "全局", agent: null, key: "max_parallel", options: ["", "1", "2", "4", "8"],
+    { g: "全局", agent: null, key: "max_parallel", label: "parallel", options: ["", "1", "2", "4", "8"],
       get: (c) => c.max_parallel, set: (c, v) => (c.max_parallel = v),
       check: (v) => (!v || /^\d+$/.test(v) ? "" : "max_parallel must be a whole number, 0 for no limit"),
       shown: (v) => v || `<span class="def">默认（不限）</span>`,
@@ -494,7 +494,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       const bad = f.check && f.check(v), warn = f.warn && f.warn(v);
       const mark = bad ? `<span class="err">✗</span>` : v !== f.get(C.saved) ? `<span class="changed">●</span>` : warn ? `<span class="warn">!</span>` : "";
       const note = bad ? `<span class="fielderr">${esc(bad)}</span>` : warn ? `<span class="fielderr warn">${esc(warn)}</span>` : "";
-      html += `<div class="field${on ? " sel" : ""}" data-i="${i}"><span class="fk">${f.key}</span><span class="fv">${val}</span><span class="fm">${mark}</span>${note}</div>`;
+      html += `<div class="field${on ? " sel" : ""}" data-i="${i}"><span class="fk">${f.label || f.key}</span><span class="fv">${val}</span><span class="fm">${mark}</span>${note}</div>`;
     });
     return html;
   }

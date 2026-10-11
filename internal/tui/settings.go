@@ -44,6 +44,7 @@ type executable struct {
 // accepts typed input. "" means the default.
 type field struct {
 	agent, key string // agent is empty for global fields
+	label      string // shorter list label than key, which the title and file use
 	group      string // list heading when not an agent's; default 全局
 	options    []string
 	get        func(app.Config) string
@@ -66,7 +67,7 @@ func settingsFields() []field {
 			get: func(c app.Config) string { return c.Agent }, set: func(c *app.Config, v string) { c.Agent = v }},
 		{key: "timeout", options: []string{"", "30m", "1h", "2h", "4h"},
 			get: func(c app.Config) string { return c.Timeout }, set: func(c *app.Config, v string) { c.Timeout = v }},
-		{key: "max_parallel", options: []string{"", "1", "2", "4", "8"},
+		{key: "max_parallel", label: "parallel", options: []string{"", "1", "2", "4", "8"},
 			get: func(c app.Config) string {
 				return map[bool]string{true: strconv.Itoa(c.MaxParallel)}[c.MaxParallel != 0]
 			},
@@ -377,7 +378,7 @@ func (m model) settingsLines(w int) ([]string, []int, int) {
 		val := m.fieldValue(f, v)
 		if i == s.cursor && s.editing {
 			in := s.input
-			in.Width = max(1, w-15)
+			in.Width = max(1, w-16)
 			val = in.View()
 		} else if i == s.cursor && f.options != nil {
 			val = p.text(p.accent).Render("‹ ") + val + p.text(p.accent).Render(" ›")
@@ -394,14 +395,14 @@ func (m model) settingsLines(w int) ([]string, []int, int) {
 		}
 		stripe := p.text(bar).Background(bg).Render("▎")
 		style := p.text(p.ink).Background(bg)
-		left := stripe + "  " + p.text(p.dim).Render(fmt.Sprintf("%-8s", f.key)) + val
+		left := stripe + "  " + p.text(p.dim).Render(fmt.Sprintf("%-9s", cmp.Or(f.label, f.key))) + val
 		lines, owners = append(lines, paint(rightRow(left, mark, max(1, w-1)), style, w)), append(owners, i)
 		note, color := warn, p.wait
 		if err != nil {
 			note, color = err.Error(), p.bad
 		}
 		if note != "" {
-			lines, owners = append(lines, paint(stripe+strings.Repeat(" ", 11)+p.text(color).Render(fit(note, max(1, w-13))), style, w)), append(owners, i)
+			lines, owners = append(lines, paint(stripe+strings.Repeat(" ", 12)+p.text(color).Render(fit(note, max(1, w-14))), style, w)), append(owners, i)
 		}
 	}
 	return lines, owners, selected
