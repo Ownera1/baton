@@ -619,3 +619,11 @@ func TestPaintKeepsBackgroundAfterNestedReset(t *testing.T) {
 		t.Fatalf("width %d, want 6", lipgloss.Width(got))
 	}
 }
+
+func TestSpinnerStopsWhenNothingRuns(t *testing.T) {
+	m := model{tasks: []*app.Task{{Status: "succeeded"}}, spinning: true}
+	next, cmd := m.Update(spinMsg{})
+	if cmd != nil || next.(model).spinning {
+		t.Fatal("spinner must stop scheduling ticks when no task is running")
+	}
+}

@@ -32,6 +32,7 @@ type model struct {
 	detail        bool
 	zoom, expand  bool
 	dragging      bool
+	spinning      bool // a spinner tick is scheduled; only while a task runs
 	ratio, tab    int
 	theme         string
 	palette       palette
@@ -122,7 +123,16 @@ func tick() tea.Cmd {
 func spin() tea.Cmd {
 	return tea.Tick(100*time.Millisecond, func(time.Time) tea.Msg { return spinMsg{} })
 }
-func (m model) Init() tea.Cmd { return tea.Batch(m.refresh(), tick(), spin()) }
+func (m model) Init() tea.Cmd { return tea.Batch(m.refresh(), tick()) }
+
+func running(tasks []*app.Task) bool {
+	for _, t := range tasks {
+		if t.Status == "running" {
+			return true
+		}
+	}
+	return false
+}
 func (m model) refresh() tea.Cmd {
 	return func() tea.Msg {
 		list, err := m.svc.List()
@@ -200,6 +210,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = max(1, msg.Width), max(1, msg.Height)
 	case spinMsg:
+		// Every message redraws the whole screen, so tick only while something spins.
+		if !running(m.tasks) {
+			m.spinning = false
+			return m, nil
+		}
 		m.frame = (m.frame + 1) % len(spinner)
 		if t := m.task(); t != nil && t.Status == "running" {
 			m.syncViewport() // Redraw cached content; no filesystem or service reads.
@@ -211,6 +226,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = ""
 		}
 		m.syncViewport()
+		if running(m.tasks) && !m.spinning {
+			m.spinning = true
+			return m, tea.Batch(m.refresh(), tick(), spin())
+		}
 		return m, tea.Batch(m.refresh(), tick())
 	case listMsg:
 		m.err = msg.err
