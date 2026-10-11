@@ -17,7 +17,7 @@ url="https://github.com/Ownera1/baton/archive/refs/tags/$tag.tar.gz"
 sha=$(curl -fsSL "$url" | shasum -a 256 | cut -d' ' -f1)
 tap=$(mktemp -d)
 trap 'rm -rf "$tap"' EXIT
-gh repo clone Ownera1/homebrew-tap "$tap" -- -q
+git clone -q https://github.com/Ownera1/homebrew-tap.git "$tap"
 mkdir -p "$tap/Formula"
 cat > "$tap/Formula/baton.rb" <<RUBY
 class Baton < Formula
@@ -31,7 +31,7 @@ class Baton < Formula
   depends_on "go" => :build
 
   def install
-    system "go", "build", *std_go_args(ldflags: "-s -w -X main.version=#{version}"), "./cmd/baton"
+    system "go", "build", *std_go_args(ldflags: "-X main.version=#{version}"), "./cmd/baton"
   end
 
   test do
