@@ -61,7 +61,7 @@ baton                                     # 打开面板（同 baton tui）
 
 ### 接力
 
-`-base <任务>`（MCP 的 `base`）让新任务接着一个已结束的写任务：写任务从它的 `baton/<id>` 分支最新提交建新 worktree 和分支，`patch.diff` 只含自己这一段，检查沿用它的检查列表，源仓库有未提交改动也可以；只读任务在它的 worktree 里运行，适合评审。第 1 轮提示里会告诉子 Agent 用 `git diff <它的起点>` 查看前一个任务的改动。`repo` 默认取它的仓库，写了别的仓库会报错；只读任务或仍在运行的任务不能作为 base。worktree 共享分支，整合多个并行任务时，以其中一个为 base，让子 Agent 自己 `git merge baton/<另一个>` 即可，Baton 不做合并。
+`-base <任务>`（MCP 的 `base`）让新任务接着一个已结束的写任务：写任务从它的 `baton/<id>` 分支最新提交建新 worktree 和分支，`patch.diff` 只含自己这一段，检查沿用它的检查列表，源仓库有未提交改动也可以；只读任务在它的 worktree 里运行，适合评审。第 1 轮提示里会告诉子 Agent 用 `git diff <它的起点>` 查看前一个任务的改动。`repo` 默认取它的仓库，写了别的仓库会报错；只读任务或仍在运行的任务不能作为 base。Baton 不做合并，子 Agent 也合并不了：沙箱不允许写 worktree 的 git 元数据（实测 codex 的 `git merge` 失败）。整合并行任务时，由主 Agent 先审核各分支，再自己合并通过审核的 `baton/<id>`。
 
 `-group <名字>`（MCP 的 `group`）给一起完成同一目标的任务打标签，以 base 派出的任务不写时沿用 base 的组；`baton list -group 名字`、MCP `baton_list` 的 `group` 只列这一组，列表和面板里显示为 `#名字`。
 
