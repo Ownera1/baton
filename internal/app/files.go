@@ -82,6 +82,33 @@ func lock(dir string, nonblocking bool) (*os.File, error) {
 	return f, nil // close releases the cross-process lock
 }
 
+// DepthEnv is set to 1 for every worker, so agents and checks inherit it.
+const DepthEnv = "BATON_DEPTH"
+
+// nested refuses dispatch from inside a task: a worker's environment, or a
+// repository inside a task worktree for CLIs that do not pass the environment
+// on to their MCP servers.
+// ponytail: depth fixed at one level; make it configurable if sub-agents should fan out.
+func (s *Service) nested(repo string) error {
+	if v := os.Getenv(DepthEnv); v != "" && v != "0" {
+		return fmt.Errorf("refusing to dispatch from inside a Baton task (%s=%s): sub-agents cannot dispatch further tasks", DepthEnv, v)
+	}
+	if repo == "" {
+		return nil
+	}
+	tasks, err := filepath.EvalSymlinks(filepath.Join(s.Home, "tasks"))
+	if err != nil {
+		return nil // no tasks yet, so no task worktrees
+	}
+	if real, err := filepath.EvalSymlinks(repo); err == nil {
+		repo = real
+	}
+	if rel, err := filepath.Rel(tasks, repo); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("refusing to dispatch from a Baton task worktree %s: reply to that task instead", repo)
+	}
+	return nil
+}
+
 func alive(pid int) bool {
 	// ponytail: kill(pid, 0) cannot detect PID reuse; a reused PID may look alive.
 	if pid <= 0 {

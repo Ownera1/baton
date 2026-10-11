@@ -51,6 +51,8 @@ func TestEndToEnd(t *testing.T) {
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("FIXTURE_PATH", filepath.Join(root, "testdata", "fixtures", "stream", "codex.jsonl"))
+	t.Setenv("BATON_BIN", bin)
+	t.Setenv("SOURCE_REPO", repo)
 	argvLog := filepath.Join(dir, "argv.log")
 	t.Setenv("ARGV_LOG", argvLog)
 	// Only this fake codex is executed; no provider or real agent is used.
@@ -61,6 +63,7 @@ printf '%s\n' "$PWD" "$@" >> "$ARGV_LOG"
 case "$*" in
   *HOLD*) echo "$$" > agent.pid; sleep 60 ;;
   *DELAY*) sleep 1 ;;
+  *NESTED*) "$BATON_BIN" do child -repo "$SOURCE_REPO" > nested.out 2>&1 || true ;;
 esac
 case "$*" in *read-only*) ;; *) printf 'turn\n' >> result.txt ;; esac
 cat "$FIXTURE_PATH"
@@ -150,6 +153,15 @@ printf 'raw stderr\n' >&2
 	log, err := os.ReadFile(argvLog)
 	if err != nil || !bytes.Contains(log, []byte("resume\n")) || !bytes.Contains(log, []byte("sandbox_mode=\"workspace-write\"")) || !bytes.Contains(log, []byte("-m\ncfg-model\n")) {
 		t.Fatalf("resume arguments: %q %v", log, err)
+	}
+	// Sub-agents cannot dispatch: the worker environment and task worktrees refuse it.
+	if out, err := exec.Command(bin, "do", "from worktree", "-repo", firstWT).CombinedOutput(); err == nil || !strings.Contains(string(out), "task worktree") {
+		t.Fatalf("dispatch from worktree: %s %v", out, err)
+	}
+	cli(&submitted, "do", "NESTED", "-repo", repo, "-no-check", "-timeout", "20s")
+	cli(&task, "wait", submitted.ID, "-timeout", "20s")
+	if out, err := os.ReadFile(filepath.Join(task.Worktree, "nested.out")); err != nil || !strings.Contains(string(out), "BATON_DEPTH=1") {
+		t.Fatalf("nested dispatch: %s %v", out, err)
 	}
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "fail check", "-check", "false", "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
