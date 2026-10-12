@@ -52,6 +52,7 @@ func TestEndToEnd(t *testing.T) {
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("FIXTURE_PATH", filepath.Join(root, "testdata", "fixtures", "stream", "codex.jsonl"))
 	t.Setenv("BATON_BIN", bin)
+	t.Setenv("READ_PWD", filepath.Join(dir, "read-pwd"))
 	t.Setenv("SOURCE_REPO", repo)
 	nestedOut := filepath.Join(dir, "nested.out")
 	t.Setenv("NESTED_OUT", nestedOut)
@@ -65,6 +66,7 @@ printf '%s\n' "$PWD" "$@" >> "$ARGV_LOG"
 case "$*" in
   *HOLD*) echo "$$" > agent.pid; sleep 60 ;;
   *DELAY*) sleep 1 ;;
+  *BASE-READ*) pwd -P > "$READ_PWD" ;;
   *NESTED-NOENV*) env -u BATON_DEPTH "$BATON_BIN" do child -repo "$SOURCE_REPO" > "$NESTED_OUT" 2>&1 || true ;;
   *NESTED*) "$BATON_BIN" do child -repo "$SOURCE_REPO" > "$NESTED_OUT" 2>&1 || true ;;
 esac
@@ -172,6 +174,41 @@ printf 'raw stderr\n' >&2
 	if out, err := os.ReadFile(nestedOut); err != nil || !strings.Contains(string(out), "worker pid") {
 		t.Fatalf("nested dispatch without BATON_DEPTH: %s %v", out, err)
 	}
+	// base: write branches from the first task even with a dirty source and no -repo; read runs in its worktree.
+	firstID := result.ID
+	firstHead, err := workspace.Git(repo, "rev-parse", firstBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "scratch.txt"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	cli(&submitted, "do", "BASE-WRITE", "-base", firstID[len(firstID)-8:], "-no-check", "-timeout", "20s")
+	cli(&task, "wait", submitted.ID, "-timeout", "20s")
+	if task.Status != "succeeded" || task.BaseTask != firstID || task.BaseCommit != firstHead || task.Repo != result.Repo {
+		t.Fatalf("base write: %+v", task)
+	}
+	if b, err := os.ReadFile(filepath.Join(task.Worktree, "result.txt")); err != nil || string(b) != "turn\nturn\nturn\n" {
+		t.Fatalf("base worktree: %q %v", b, err)
+	}
+	if patch, err := os.ReadFile(task.PatchPath); err != nil || bytes.Count(patch, []byte("+turn")) != 1 {
+		t.Fatalf("base patch: %s %v", patch, err)
+	}
+	if err := os.Remove(filepath.Join(repo, "scratch.txt")); err != nil {
+		t.Fatal(err)
+	}
+	cli(&submitted, "ask", "BASE-READ", "-base", firstID, "-timeout", "20s")
+	cli(&task, "wait", submitted.ID, "-timeout", "20s")
+	realWT, _ := filepath.EvalSymlinks(firstWT)
+	if b, err := os.ReadFile(filepath.Join(dir, "read-pwd")); err != nil || strings.TrimSpace(string(b)) != realWT || task.Status != "succeeded" || task.BaseCommit != firstHead {
+		t.Fatalf("base read ran in %q (%v), want %s: %+v", b, err, realWT, task)
+	}
+	if log, err := os.ReadFile(argvLog); err != nil || !bytes.Contains(log, []byte("接着任务 "+firstID)) || !bytes.Contains(log, []byte("git diff "+base)) {
+		t.Fatalf("base hint: %v", err)
+	}
+	if out, err := exec.Command(bin, "do", "x", "-base", submitted.ID).CombinedOutput(); err == nil || !strings.Contains(string(out), "read-only") {
+		t.Fatalf("read task as base: %s %v", out, err)
+	}
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "fail check", "-check", "false", "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
 	if task.Status != "failed" || task.Verify.Status != "fail" || task.Verify.Checks[0].ExitCode != 1 {
@@ -236,6 +273,17 @@ printf 'raw stderr\n' >&2
 	}
 	if out, err := exec.Command(bin, "reply", submitted.ID, "-msg", "invalid").CombinedOutput(); err == nil {
 		t.Fatalf("active reply accepted: %s", out)
+	}
+	if out, err := exec.Command(bin, "do", "x", "-base", submitted.ID).CombinedOutput(); err == nil || !strings.Contains(string(out), "wait for it first") {
+		t.Fatalf("running task as base: %s %v", out, err)
+	}
+	var many struct{ Tasks []app.Task }
+	cli(&many, "wait", submitted.ID, firstID, "-any", "-timeout", "10s")
+	if len(many.Tasks) != 2 || many.Tasks[0].Status != "running" || many.Tasks[1].Status != "succeeded" {
+		t.Fatalf("wait -any: %+v", many)
+	}
+	if out, err := exec.Command(bin, "wait", submitted.ID, firstID, "-timeout", "300ms").CombinedOutput(); err == nil || !strings.Contains(string(out), "deadline exceeded") {
+		t.Fatalf("wait all while one runs: %s %v", out, err)
 	}
 	cli(&task, "cancel", submitted.ID)
 	cli(&task, "wait", submitted.ID, "-timeout", "10s", "-json")
@@ -315,6 +363,15 @@ printf 'raw stderr\n' >&2
 	var mcpResult app.Result
 	if err := json.Unmarshal(b, &mcpResult); err != nil || mcpResult.ID != held.ID || mcpResult.Status != "canceled" {
 		t.Fatalf("MCP JSON: %s %v", b, err)
+	}
+	out, err = conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_wait", Arguments: map[string]any{"ids": []string{held.ID, firstID}, "timeout_seconds": 5}})
+	if err != nil || out.IsError {
+		t.Fatalf("MCP wait ids: %+v %v", out, err)
+	}
+	b, _ = json.Marshal(out.StructuredContent)
+	var top map[string]any
+	if err := json.Unmarshal(b, &many); err != nil || len(many.Tasks) != 2 || many.Tasks[0].ID != held.ID || json.Unmarshal(b, &top) != nil || len(top) != 1 {
+		t.Fatalf("MCP wait ids: %s %v", b, err)
 	}
 	// Hidden agents are left out of baton_agents and refused over MCP only.
 	exposed := func() map[string]app.AgentInfo {

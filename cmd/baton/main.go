@@ -26,7 +26,8 @@ const usage = `用法：
   baton do [agent|角色] <任务>    派出改代码的任务，默认 codex（可在配置中修改）
   baton ask [agent|角色] <问题>   派出只读任务
   baton reply [任务] <消息>       在同一会话里继续
-  baton wait|result|status|cancel [任务]
+  baton wait [任务…] [-any]      等任务结束；写多个时等全部，-any 等到第一个
+  baton result|status|cancel [任务]
   baton agents                   列出 Agent 和角色（.baton/agents/、~/.config/baton/agents/ 下的 *.md）
   baton list | tui | mcp | version
   baton config                   终端里打开设置面板；管道或 -json 时打印配置
@@ -34,6 +35,7 @@ const usage = `用法：
 <任务> 可以是文字、@文件，或 - 从标准输入读；[任务] 默认最近一个，可写 ID 的前缀或后缀。
 常用参数（可写在任意位置）：-w 等完成并打印结果  -check 命令  -no-check  -title 标题
   -repo 路径（默认当前目录）  -model  -effort  -timeout（默认 2h）  -json
+  -base 任务：接着另一个写任务做（do 从它的分支继续，ask 在它的 worktree 里只读）
 各 Agent 的默认模型、effort、可执行文件写在 ~/.config/baton/config.json，baton config 查看。`
 
 type checks []string
@@ -149,6 +151,7 @@ func run(args []string) error {
 		fs.StringVar(&req.Agent, "agent", "", "codex|claude|grok|agy|pi or a role (default: BATON_AGENT, config, then codex)")
 		fs.StringVar(&req.Repo, "repo", "", "git repository (default: current directory)")
 		fs.StringVar(&req.Task, "task", "", "text or @file")
+		fs.StringVar(&req.Base, "base", "", "finished write task to continue from")
 		fs.StringVar(&req.Title, "title", "", "conversation title (inferred from task when omitted)")
 		fs.StringVar(&req.Model, "model", "", "model (default: Baton config, then the agent's own config)")
 		fs.StringVar(&req.Effort, "effort", "", "reasoning effort (default: Baton config, then the agent's own config)")
@@ -219,8 +222,29 @@ func run(args []string) error {
 		return submitted(svc, id, *wait, *asJSON)
 	case "status", "wait", "result", "cancel":
 		timeout := fs.Duration("timeout", app.DefaultTimeout, "wait timeout")
+		first := new(bool)
+		if cmd == "wait" {
+			fs.BoolVar(first, "any", false, "with several tasks, return when the first finishes")
+		}
 		pos, err := parse(fs, args[1:])
 		if err != nil {
+			return err
+		}
+		if cmd == "wait" && len(pos) > 1 {
+			ids := make([]string, len(pos))
+			for i, ref := range pos {
+				if ids[i], err = svc.Resolve(ref); err != nil {
+					return err
+				}
+			}
+			tasks, err := svc.WaitMany(context.Background(), ids, *first, *timeout)
+			if *asJSON {
+				_ = emit(map[string]any{"tasks": tasks})
+			} else {
+				for _, t := range tasks {
+					fmt.Println(line(t))
+				}
+			}
 			return err
 		}
 		if len(pos) > 1 {

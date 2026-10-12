@@ -25,26 +25,29 @@ type Task struct {
 	Agent string `json:"agent"`
 	Role  string `json:"role,omitempty"`
 	// Instructions is the role's body when dispatched, put before turn 1.
-	Instructions string        `json:"instructions,omitempty"`
-	AgentPath    string        `json:"agent_path,omitempty"` // configured executable; empty means PATH lookup
-	Mode         string        `json:"mode"`
-	Repo         string        `json:"repo"`
-	Worktree     string        `json:"worktree"`
-	Branch       string        `json:"branch"`
-	BaseCommit   string        `json:"base_commit"`
-	Model        string        `json:"model,omitempty"`
-	Effort       string        `json:"effort,omitempty"`
-	Checks       []string      `json:"checks"`
-	Status       string        `json:"status"`
-	WorkerPID    int           `json:"worker_pid"`
-	SessionID    string        `json:"session_id"`
-	Turns        []Turn        `json:"turns"`
-	Verify       verify.Result `json:"verify"`
-	Diffstat     string        `json:"diffstat"`
-	PatchPath    string        `json:"patch_path"`
-	Warnings     []string      `json:"warnings,omitempty"`
-	CreatedAt    time.Time     `json:"created_at"`
-	UpdatedAt    time.Time     `json:"updated_at"`
+	Instructions string `json:"instructions,omitempty"`
+	AgentPath    string `json:"agent_path,omitempty"` // configured executable; empty means PATH lookup
+	Mode         string `json:"mode"`
+	Repo         string `json:"repo"`
+	Worktree     string `json:"worktree"`
+	Branch       string `json:"branch"`
+	BaseCommit   string `json:"base_commit"`
+	// BaseTask is the write task this one continues: a write task branches from
+	// its latest commit, a read task runs in its worktree.
+	BaseTask  string        `json:"base_task,omitempty"`
+	Model     string        `json:"model,omitempty"`
+	Effort    string        `json:"effort,omitempty"`
+	Checks    []string      `json:"checks"`
+	Status    string        `json:"status"`
+	WorkerPID int           `json:"worker_pid"`
+	SessionID string        `json:"session_id"`
+	Turns     []Turn        `json:"turns"`
+	Verify    verify.Result `json:"verify"`
+	Diffstat  string        `json:"diffstat"`
+	PatchPath string        `json:"patch_path"`
+	Warnings  []string      `json:"warnings,omitempty"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
 }
 
 type RunRequest struct {
@@ -53,6 +56,7 @@ type RunRequest struct {
 	Repo   string   `json:"repo,omitempty" jsonschema:"git repository; defaults to the current directory"`
 	Task   string   `json:"task"`
 	Mode   string   `json:"mode,omitempty" jsonschema:"read or write; defaults to the role's mode, then write"`
+	Base   string   `json:"base,omitempty" jsonschema:"a finished write task (id, unique prefix or suffix) to continue from: write branches from its latest commit and inherits its checks, read runs in its worktree; repo defaults to its repository"`
 	Model  string   `json:"model,omitempty"`
 	Effort string   `json:"effort,omitempty"`
 	Checks []string `json:"checks,omitempty" jsonschema:"check commands; omitted means detect from the project (.baton/checks, go.mod, Cargo.toml, Makefile test)"`

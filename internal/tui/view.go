@@ -185,6 +185,9 @@ func (m model) summary(t *app.Task, w int) string {
 		cost = fmt.Sprintf("$%.6f", sum)
 	}
 	meta := fmt.Sprintf("%s · %s / %s · %s · %s · 成本 %s", t.Who(), value(t.Model), value(t.Effort), modeName(t.Mode), timing, cost)
+	if t.BaseTask != "" {
+		meta += " · 接着 " + t.BaseTask[max(0, len(t.BaseTask)-8):]
+	}
 	lines = append(lines, p.text(p.dim).Render(ansi.Wrap(clean(meta), w, "")))
 	chips := []string{p.text(p.dim).Render("检查")}
 	result := latestVerify(t)

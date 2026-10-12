@@ -21,6 +21,13 @@ import (
 
 func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	var err error
+	var base *Task
+	if in.Base != "" {
+		if base, err = s.baseTask(in.Base); err != nil {
+			return nil, err
+		}
+		in.Repo = cmp.Or(in.Repo, base.Repo)
+	}
 	if in.Repo == "" {
 		if in.Repo, err = os.Getwd(); err != nil {
 			return nil, err
@@ -80,16 +87,28 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	if err := s.nested(info.Root); err != nil {
 		return nil, err
 	}
-	if in.Mode == "write" {
+	head := info.Head
+	if base != nil {
+		if info.Root != base.Repo {
+			return nil, fmt.Errorf("base task %s belongs to %s, not %s", base.ID, base.Repo, info.Root)
+		}
+		// The new worktree starts from a commit, so the source checkout may be dirty.
+		if head, err = workspace.Git(info.Root, "rev-parse", "--verify", "refs/heads/"+base.Branch); err != nil {
+			return nil, fmt.Errorf("base task %s: %w", base.ID, err)
+		}
+		if in.Checks == nil && in.Mode == "write" {
+			in.Checks = base.Checks
+		}
+	} else if in.Mode == "write" {
 		if err := workspace.RequireClean(info); err != nil {
 			return nil, err
 		}
 		if !info.HasCommits {
 			return nil, fmt.Errorf("write mode requires a repository with a HEAD commit")
 		}
-		if in.Checks == nil {
-			in.Checks = DetectChecks(info.Root)
-		}
+	}
+	if in.Mode == "write" && in.Checks == nil {
+		in.Checks = DetectChecks(info.Root)
 	}
 	if in.NoChecks {
 		in.Checks = nil
@@ -104,7 +123,7 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 		return nil, err
 	}
 	now := time.Now().UTC()
-	t := Task{ID: id, Title: title, Agent: in.Agent, Mode: in.Mode, Repo: info.Root, BaseCommit: info.Head,
+	t := Task{ID: id, Title: title, Agent: in.Agent, Mode: in.Mode, Repo: info.Root, BaseCommit: head,
 		AgentPath: ac.Path, Model: in.Model, Effort: in.Effort, Checks: in.Checks, Status: "queued", Turns: []Turn{},
 		Verify: verify.Result{Status: verify.StatusNone, Checks: []verify.Outcome{}}, CreatedAt: now, UpdatedAt: now}
 	if t.Checks == nil {
@@ -112,6 +131,9 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	}
 	if role != nil {
 		t.Role, t.Instructions = role.Name, role.Prompt
+	}
+	if base != nil {
+		t.BaseTask = base.ID
 	}
 	if in.Mode == "write" {
 		t.Worktree = filepath.Join(dir, "wt")
@@ -173,25 +195,64 @@ func (s *Service) Status(id string) (*Task, error) {
 	return &t, nil
 }
 
+// baseTask is a finished write task that another task may continue from.
+func (s *Service) baseTask(ref string) (*Task, error) {
+	id, err := s.Resolve(ref)
+	if err != nil {
+		return nil, err
+	}
+	t, err := s.Status(id)
+	if err != nil {
+		return nil, err
+	}
+	if t.Mode != "write" {
+		return nil, fmt.Errorf("base task %s is read-only and has no branch", id)
+	}
+	if t.Status == "queued" || t.Status == "running" || t.Status == "stale" {
+		return nil, fmt.Errorf("base task %s is %s; wait for it first", id, t.Status)
+	}
+	return t, nil
+}
+
 func (s *Service) Wait(ctx context.Context, id string, timeout time.Duration) (*Task, error) {
+	tasks, err := s.WaitMany(ctx, []string{id}, false, timeout)
+	if len(tasks) == 0 {
+		return nil, err
+	}
+	return tasks[0], err
+}
+
+// WaitMany polls until every task, or with first any one of them, has left
+// queued and running, or until timeout; it returns every task's state.
+func (s *Service) WaitMany(ctx context.Context, ids []string, first bool, timeout time.Duration) ([]*Task, error) {
 	if timeout <= 0 {
 		return nil, fmt.Errorf("wait timeout must be positive")
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("no tasks to wait for")
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		t, err := s.Status(id)
-		if err != nil {
-			return nil, err
+		tasks, done := make([]*Task, len(ids)), 0
+		for i, id := range ids {
+			t, err := s.Status(id)
+			if err != nil {
+				return nil, err
+			}
+			tasks[i] = t
+			if t.Status != "queued" && t.Status != "running" {
+				done++
+			}
 		}
-		if t.Status != "queued" && t.Status != "running" {
-			return t, nil
+		if done == len(ids) || (first && done > 0) {
+			return tasks, nil
 		}
 		select {
 		case <-ctx.Done():
-			return t, ctx.Err()
+			return tasks, ctx.Err()
 		case <-ticker.C:
 		}
 	}
