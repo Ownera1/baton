@@ -24,6 +24,7 @@ baton do -base a1b2c3d4 补上测试            # 接着另一个写任务的分
 baton result 2fa5f633                     # 结果、分支、检查、diffstat、最终回复
 baton agents                              # 可派的 Agent 和角色
 baton sessions -json                      # 当前仓库各任务的会话记录在哪
+baton export -all                         # 把当前仓库的对话导出为 Markdown，写到 .baton/history/
 baton config                              # 设置面板；管道或 -json 时打印各 Agent 实际用的模型、effort、可执行文件
 baton                                     # 打开面板（同 baton tui）
 ```
@@ -72,6 +73,10 @@ baton                                     # 打开面板（同 baton tui）
 
 写任务在 worktree（`$BATON_HOME/tasks/<id>/wt`）里运行，claude、pi、grok 按运行目录存会话，这些记录不会归到仓库名下。`baton sessions` 列出当前仓库（`-repo` 指定其他仓库，`-all` 列出全部）每个任务的运行目录、Agent 自己的会话文件和 Baton 存的每轮输出（`turn-N.stdout`，完整事件流）；`-json` 供其他工具读取。会话文件按默认位置查找，跟随 `CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`PI_CODING_AGENT_DIR`，找不到时只给 Baton 的那份。
 
+### 导出对话
+
+`baton export [任务…]`（默认最近一个；`-all` 导出当前仓库的全部任务，`-repo` 指定其他仓库，`-group` 导出一组）、面板里的 `x`、MCP 的 `baton_export` 把对话写成 Markdown，放在任务所属仓库的 `.baton/history/<日期>-<标题>-<ID 后 8 位>.md`，在这个项目里工作的 Agent 都能读到。每轮包含指令、最终回复（附工具调用数）和检查结果；再次导出会覆盖同一个文件。第一次导出时目录里会生成只含 `*` 的 `.gitignore`，导出文件不会让仓库变脏、影响下次派写任务；想提交这些记录就删掉它。
+
 ### 角色
 
 角色是带固定说明的子 Agent，一个 Markdown 文件一个，文件名即角色名（小写字母、数字、`-`、`_`，不能和 Agent 重名）。仓库的 `.baton/agents/<名字>.md` 覆盖配置目录（默认 `~/.config/baton/`）下的 `agents/<名字>.md`。
@@ -117,9 +122,10 @@ Pi 始终加 `-ne`，禁用用户扩展。Codex resume 没有 `-s`/`-C`，使用
 | `z` | 专注详情，再按恢复分栏 |
 | `e` | 展开/折叠各轮工具调用和超过 12 行的提问；运行中默认显示最近 4 条事件 |
 | `c`、`y` | 请求取消后确认；`esc` 或其他键关闭确认 |
+| `x` | 把选中的对话导出到仓库的 `.baton/history/`（见「导出对话」），底栏显示文件名 |
 | `q`、`ctrl+c` | 退出面板，任务继续运行；确认取消期间只关闭确认 |
 
-分隔线支持鼠标拖动，滚轮滚动指针所在的那一栏，不改变焦点。宽度小于 100 列时上下堆叠，比例作用于高度。比例保存到 `$BATON_HOME/tui.json`（例如 `{"ratio":38}`），下次启动恢复；配置缺失、损坏或读写失败不影响运行。数据仍每秒刷新，braille 转圈每 100ms 重绘一次，不读取文件；stdout 大小不变时不再解析，Markdown 按任务、轮次、详情宽度、主题和回复长度缓存。窄终端会截短底栏提示和过长事件/改动行，方向键与快捷键仍可使用。除了确认取消和比例配置，面板不写任务文件；设置只在 `ctrl+s` 时写 `config.json`。
+分隔线支持鼠标拖动，滚轮滚动指针所在的那一栏，不改变焦点。宽度小于 100 列时上下堆叠，比例作用于高度。比例保存到 `$BATON_HOME/tui.json`（例如 `{"ratio":38}`），下次启动恢复；配置缺失、损坏或读写失败不影响运行。数据仍每秒刷新，braille 转圈每 100ms 重绘一次，不读取文件；stdout 大小不变时不再解析，Markdown 按任务、轮次、详情宽度、主题和回复长度缓存。窄终端会截短底栏提示和过长事件/改动行，方向键与快捷键仍可使用。除了确认取消、比例配置和导出，面板不写任务文件；设置只在 `ctrl+s` 时写 `config.json`。
 
 损坏或缺失的任务文件会显示读取错误并继续刷新；列表读取失败时保留上次成功的列表。未写完的 JSONL 行会暂时忽略，下一次刷新再解析。grok read 只开放三个只读工具，避免 plan 模式中的终端工具尝试取消整轮任务；write 的 auto + workspace sandbox 保持原样。
 

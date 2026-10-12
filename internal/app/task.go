@@ -108,3 +108,14 @@ func (t *Task) Who() string {
 	}
 	return t.Agent
 }
+
+// Name is the title, or one inferred from the first prompt.
+func (t *Task) Name() string {
+	if t.Title != "" {
+		return t.Title
+	}
+	if len(t.Turns) > 0 {
+		return TitleFromPrompt(t.Turns[0].Prompt)
+	}
+	return "未命名对话"
+}

@@ -147,4 +147,9 @@ func register(srv *mcp.Server, svc *app.Service) {
 			out, err := svc.List(in.Group)
 			return nil, out, err
 		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_export", OutputSchema: map[string]any{"type": "object"}, Description: "Write tasks as Markdown (each turn's instruction, final reply and checks) to .baton/history/ in their repository, for agents and people working there to read. Pick tasks by ids, or every task in a group and/or repo; nothing exports the newest task. Returns the files written."},
+		func(ctx context.Context, req *mcp.CallToolRequest, in app.ExportRequest) (*mcp.CallToolResult, *app.ExportResult, error) {
+			out, err := svc.Export(in)
+			return nil, out, err
+		})
 }

@@ -296,7 +296,7 @@ func TestViewThemes(t *testing.T) {
 			m.syncViewport()
 			view := m.View()
 			plain := ansi.Strip(view)
-			for _, want := range []string{"Baton", m.now.Format("15:04:05"), "● 1 运行", "✗ 1 失败", "✓ 1 完成", "需要关注  1", "进行中  1", "已完成  1", "修复用户分页", "失败", "✗ go test", "◌ go vet", "改动 +1 −1 · 1 个文件", "1 对话", "2 事件", "3 改动", "4 检查", "↑↓ 选择", "tab/点击 切焦点", "1-4 标签", "[ ] 比例", "z 专注", "e 展开", "c 取消", "s 设置", "q 退出", "列表 38% · 详情 62%", "cursor_test.go:42"} {
+			for _, want := range []string{"Baton", m.now.Format("15:04:05"), "● 1 运行", "✗ 1 失败", "✓ 1 完成", "需要关注  1", "进行中  1", "已完成  1", "修复用户分页", "失败", "✗ go test", "◌ go vet", "改动 +1 −1 · 1 个文件", "1 对话", "2 事件", "3 改动", "4 检查", "↑↓ 选择", "tab/点击 切焦点", "1-4 标签", "[ ] 比例", "z 专注", "e 展开", "c 取消", "x 导出", "s 设置", "q 退出", "列表 38% · 详情 62%", "cursor_test.go:42"} {
 				if !strings.Contains(plain, want) {
 					t.Errorf("missing %q:\n%s", want, plain)
 				}

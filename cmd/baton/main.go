@@ -30,6 +30,7 @@ const usage = `用法：
   baton result|status|cancel [任务]
   baton agents                   列出 Agent 和角色（.baton/agents/、~/.config/baton/agents/ 下的 *.md）
   baton sessions [-repo 路径|-all]  列出仓库里任务的会话记录：运行目录、Agent 自己的会话文件、Baton 存的每轮输出
+  baton export [任务…] [-all|-group 名字]  把对话导出为 Markdown，写到仓库的 .baton/history/；-all 导出当前仓库全部任务
   baton list | tui | mcp | version
   baton config                   终端里打开设置面板；管道或 -json 时打印配置
 
@@ -345,6 +346,27 @@ func run(args []string) error {
 			fmt.Println(line(t))
 		}
 		return nil
+	case "export":
+		var req app.ExportRequest
+		all := fs.Bool("all", false, "every task of the repository (-repo, default current directory)")
+		fs.StringVar(&req.Repo, "repo", "", "every task of this git repository")
+		fs.StringVar(&req.Group, "group", "", "every task in this group")
+		pos, err := parse(fs, args[1:])
+		if err != nil {
+			return err
+		}
+		if *all && req.Repo == "" {
+			req.Repo = "."
+		}
+		req.IDs = pos
+		out, err := svc.Export(req)
+		if err != nil || *asJSON {
+			return orEmit(out, err)
+		}
+		for _, f := range out.Files {
+			fmt.Println(f)
+		}
+		return nil
 	case "sessions":
 		repo := fs.String("repo", ".", "git repository")
 		all := fs.Bool("all", false, "every repository")
@@ -424,23 +446,13 @@ func short(id string) string {
 	return id
 }
 
-func title(t *app.Task) string {
-	if t.Title != "" {
-		return t.Title
-	}
-	if len(t.Turns) > 0 {
-		return app.TitleFromPrompt(t.Turns[0].Prompt)
-	}
-	return "未命名对话"
-}
-
 // line is one row: short id, status, title, agent, mode, turns, repo.
 func line(t *app.Task) string {
 	group := ""
 	if t.Group != "" {
 		group = " · #" + t.Group
 	}
-	return fmt.Sprintf("%s %s %s · %s · %s · %s · 第 %d 轮 · %s%s", short(t.ID), glyphs[t.Status], t.Status, title(t), t.Who(), modes[t.Mode], len(t.Turns), filepath.Base(t.Repo), group)
+	return fmt.Sprintf("%s %s %s · %s · %s · %s · 第 %d 轮 · %s%s", short(t.ID), glyphs[t.Status], t.Status, t.Name(), t.Who(), modes[t.Mode], len(t.Turns), filepath.Base(t.Repo), group)
 }
 
 func printResult(r *app.Result) {
