@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,12 +20,6 @@ import (
 )
 
 func (s *Service) Run(in RunRequest) (*Submitted, error) {
-	if in.Mode == "" {
-		in.Mode = "write"
-	}
-	if in.Mode != "read" && in.Mode != "write" {
-		return nil, fmt.Errorf("mode must be read or write")
-	}
 	var err error
 	if in.Repo == "" {
 		if in.Repo, err = os.Getwd(); err != nil {
@@ -38,8 +33,28 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	if in.Agent == "" {
 		in.Agent = cfg.DefaultAgent()
 	}
+	var role *Role
+	if !slices.Contains(Agents, in.Agent) {
+		if role, err = FindRole(in.Repo, in.Agent); err != nil {
+			return nil, err
+		}
+		if in.FromMCP && role.Hidden {
+			return nil, hidden(role.Name)
+		}
+		if role.Mode != "" && in.Mode != "" && in.Mode != role.Mode {
+			return nil, fmt.Errorf("role %s only runs in %s mode", role.Name, role.Mode)
+		}
+		in.Agent, in.Mode = cmp.Or(role.Agent, cfg.DefaultAgent()), cmp.Or(in.Mode, role.Mode)
+		in.Model, in.Effort = cmp.Or(in.Model, role.Model), cmp.Or(in.Effort, role.Effort)
+	}
+	if in.Mode == "" {
+		in.Mode = "write"
+	}
+	if in.Mode != "read" && in.Mode != "write" {
+		return nil, fmt.Errorf("mode must be read or write")
+	}
 	ac := cfg.Agents[in.Agent]
-	if in.FromMCP && ac.Hidden {
+	if in.FromMCP && ac.Hidden && role == nil {
 		return nil, hidden(in.Agent)
 	}
 	in.Model, in.Effort = cmp.Or(in.Model, ac.Model), cmp.Or(in.Effort, ac.Effort)
@@ -94,6 +109,9 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 		Verify: verify.Result{Status: verify.StatusNone, Checks: []verify.Outcome{}}, CreatedAt: now, UpdatedAt: now}
 	if t.Checks == nil {
 		t.Checks = []string{}
+	}
+	if role != nil {
+		t.Role, t.Instructions = role.Name, role.Prompt
 	}
 	if in.Mode == "write" {
 		t.Worktree = filepath.Join(dir, "wt")
@@ -221,8 +239,15 @@ func (s *Service) Reply(in ReplyRequest) (*Submitted, error) {
 	if err != nil {
 		return nil, err
 	}
-	if in.FromMCP && cfg.Agents[t.Agent].Hidden {
-		return nil, hidden(t.Agent)
+	if in.FromMCP {
+		hide := cfg.Agents[t.Agent].Hidden
+		if t.Role != "" {
+			r, err := FindRole(t.Repo, t.Role)
+			hide = err == nil && r.Hidden // a removed role keeps its conversations
+		}
+		if hide {
+			return nil, hidden(cmp.Or(t.Role, t.Agent))
+		}
 	}
 	if t.Status == "queued" || t.Status == "running" || t.Status == "stale" {
 		return nil, fmt.Errorf("cannot reply to a %s task", t.Status)

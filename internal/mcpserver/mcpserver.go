@@ -3,6 +3,7 @@ package mcpserver
 
 import (
 	"baton/internal/app"
+	"cmp"
 	"context"
 	"fmt"
 	"time"
@@ -25,12 +26,14 @@ type taskID struct {
 }
 
 func register(srv *mcp.Server, svc *app.Service) {
-	mcp.AddTool(srv, &mcp.Tool{Name: "baton_agents", OutputSchema: map[string]any{"type": "object"}, Description: "List the sub-agents you may dispatch to: name, what it is and how read and write tasks run, configured model and effort, the default, and any error that would make dispatch fail. Agents the user hid are omitted and refused by baton_run and baton_reply."},
-		func(ctx context.Context, req *mcp.CallToolRequest, in struct{}) (*mcp.CallToolResult, *app.AgentList, error) {
-			out, err := app.Exposed()
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_agents", OutputSchema: map[string]any{"type": "object"}, Description: "List the agents and roles you may dispatch to with baton_run's agent. Agents are the coding CLIs, with how read and write tasks run. Roles are the user's sub-agents: a description to choose by, the agent they run on, model, effort, and a mode when they only run read or write; their instructions are added to the first turn. Also the default agent and any error that would make dispatch fail. Hidden agents and roles are omitted and refused by baton_run and baton_reply."},
+		func(ctx context.Context, req *mcp.CallToolRequest, in struct {
+			Repo string `json:"repo,omitempty" jsonschema:"git repository whose .baton/agents roles to include; defaults to the server's directory"`
+		}) (*mcp.CallToolResult, *app.AgentList, error) {
+			out, err := app.AgentsFor(cmp.Or(in.Repo, "."), false)
 			return nil, out, err
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "baton_run", Description: "Dispatch one task to an agent in a detached worker. Only task is required: agent (one listed by baton_agents), model and effort default to the user's Baton config (agent codex if unset), repo to the server's directory, checks are detected from the project. Pass the conversation title in title. Mode defaults to write; no planning or review."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_run", Description: "Dispatch one task to an agent in a detached worker. Only task is required: agent (an agent or role listed by baton_agents), model and effort default to the user's Baton config (agent codex if unset), repo to the server's directory, checks are detected from the project. Pass the conversation title in title. Mode defaults to write; no planning or review."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in app.RunRequest) (*mcp.CallToolResult, *app.Submitted, error) {
 			in.FromMCP = true
 			out, err := svc.Run(in)

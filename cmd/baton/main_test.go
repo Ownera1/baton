@@ -2,6 +2,8 @@ package main
 
 import (
 	"flag"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -18,6 +20,14 @@ func TestParseFlagsAnywhere(t *testing.T) {
 }
 
 func TestSplitAgent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BATON_CONFIG_DIR", dir)
+	if err := os.MkdirAll(filepath.Join(dir, "agents"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "agents", "reviewer.md"), []byte("---\ndescription: d\n---\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
 		in    []string
 		agent string
@@ -26,8 +36,10 @@ func TestSplitAgent(t *testing.T) {
 		{[]string{"claude", "解释 guard"}, "claude", []string{"解释 guard"}},
 		{[]string{"codex"}, "", []string{"codex"}}, // a lone word is the task
 		{[]string{"修复", "codex"}, "", []string{"修复", "codex"}},
+		{[]string{"reviewer", "看看改动"}, "reviewer", []string{"看看改动"}},
+		{[]string{"tester", "补测试"}, "", []string{"tester", "补测试"}}, // no such role
 	} {
-		agent, rest := splitAgent(c.in)
+		agent, rest := splitAgent(c.in, dir)
 		if agent != c.agent || !reflect.DeepEqual(rest, c.rest) {
 			t.Errorf("splitAgent(%q) = %q, %q", c.in, agent, rest)
 		}
