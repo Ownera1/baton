@@ -255,7 +255,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       <li><b>详情按对话展示</b>：每一轮的提问和回复上下排列，回复按 Markdown 渲染，工具调用默认折叠成一行。</li>
       <li><b>比例可调</b>：<kbd>[</kbd> <kbd>]</kbd> 每次 5%，<kbd>=</kbd> 复位，<kbd>z</kbd> 只看详情，也可以拖动分隔线；比例会记住。</li>
       <li><b>实时事件更好读</b>：每个工具调用一行，读文件、改文件、跑命令用不同符号，命令带退出码和耗时。</li>
-      <li><b>设置在同一个面板里</b>：按 <kbd>s</kbd>，左栏换成 <code>~/.config/baton/config.json</code> 的 18 项（全局 agent、timeout，面板 theme，每个 Agent 的 model、effort、path），右栏说明当前项：可选值、这个 Agent 的完整命令预览（配置带来的参数高亮）和保存后的文件（改动行标绿）。<kbd>←</kbd><kbd>→</kbd> 切换取值，<kbd>enter</kbd> 输入，<kbd>d</kbd> 恢复默认，<kbd>u</kbd> 撤销，<kbd>ctrl+s</kbd> 保存，<kbd>esc</kbd> 回到对话。切换 theme 时整个面板立即换色，默认跟随终端（这里即上方的浅色/深色按钮）。比例、分隔线和主题与对话模式共用，任务计数照常刷新；未保存的改动在顶栏提示，退出前要确认。<code>baton config</code> 在终端里直接以这个模式打开。</li>
+      <li><b>设置在同一个面板里</b>：按 <kbd>s</kbd>，左栏换成 <code>~/.config/baton/config.json</code> 的 23 项（全局 agent、timeout，面板 theme，每个 Agent 的 model、effort、path、hidden），右栏说明当前项：可选值、这个 Agent 的完整命令预览（配置带来的参数高亮）和保存后的文件（改动行标绿）。<kbd>←</kbd><kbd>→</kbd> 切换取值，<kbd>enter</kbd> 输入，<kbd>d</kbd> 恢复默认，<kbd>u</kbd> 撤销，<kbd>ctrl+s</kbd> 保存，<kbd>esc</kbd> 回到对话。切换 theme 时整个面板立即换色，默认跟随终端（这里即上方的浅色/深色按钮）。比例、分隔线和主题与对话模式共用，任务计数照常刷新；未保存的改动在顶栏提示，退出前要确认。<code>baton config</code> 在终端里直接以这个模式打开。</li>
       <li><b>浅色和深色两套主题</b>：默认跟随终端背景自动选择，也可以用 <kbd>--theme light</kbd> 或 <kbd>--theme dark</kbd> 固定。两套主题的状态色都单独调过，浅色背景上的黄色和青色更深，保证可读。</li>
     </ul>
   </section>
@@ -386,7 +386,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       claude: { model: "opus", effort: "xhigh", path: "" },
       grok: { model: "", effort: "", path: "/opt/homebrew/bin/grok" },
       agy: { model: "", effort: "", path: "" },
-      pi: { model: "", effort: "", path: "" },
+      pi: { model: "", effort: "", path: "", hidden: true },
     },
   };
   const clone = (c) => JSON.parse(JSON.stringify(c));
@@ -425,6 +425,10 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
         warn: (v) => (v && v.startsWith("/") && !EXISTS.has(v) ? "未找到该文件" : ""),
         shown: (v) => v || `<span class="def">默认 → ${FOUND[a]}</span>`,
         desc: `可执行文件。留空时在 PATH 里找 <code>${a}</code>（忽略 shell alias），写命令名也会在 PATH 里找。` },
+      { g: a, agent: a, key: "hidden", options: ["", "true"],
+        get: (c) => (c.agents[a].hidden ? "true" : ""), set: (c, v) => (c.agents[a].hidden = v === "true"),
+        shown: (v) => (v === "true" ? "隐藏（主 Agent 看不到）" : `<span class="def">默认（暴露给主 Agent）</span>`),
+        desc: `true 时主 Agent 看不到 ${a}：<code>baton_agents</code> 不列出，MCP 的 <code>baton_run</code>、<code>baton_reply</code> 拒绝它。你在终端里用 CLI 不受影响。` },
     );
   }
   const C = { saved: clone(SAMPLE), draft: clone(SAMPLE), cur: 0, editing: false, input: "", confirm: false };
@@ -441,6 +445,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
     for (const a of [...AGENTS].sort()) {
       const x = {};
       for (const k of ["model", "effort", "path"]) if (c.agents[a][k]) x[k] = c.agents[a][k];
+      if (c.agents[a].hidden) x.hidden = true;
       if (Object.keys(x).length) agents[a] = x;
     }
     if (Object.keys(agents).length) o.agents = agents;

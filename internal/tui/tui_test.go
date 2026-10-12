@@ -731,6 +731,16 @@ func TestSettingsMode(t *testing.T) {
 		t.Fatalf("save: %d %q", m.set.changed(), got)
 	}
 
+	// hidden toggles with ←/→ and is written as a bool.
+	m = press(m, key("j"), right)
+	view = ansi.Strip(m.View() + m.details())
+	if !m.set.draft.Agents["codex"].Hidden || !strings.Contains(view, "隐藏（主 Agent 看不到）") || !strings.Contains(view, `+       "hidden": true`) {
+		t.Fatalf("hidden toggle: %+v\n%s", m.set.draft, view)
+	}
+	if m = press(m, key("d"), key("k")); m.set.changed() != 0 || m.set.cursor != 5 {
+		t.Fatalf("hidden reset: %+v", m.set.draft)
+	}
+
 	// An outside edit is never overwritten; r reloads it.
 	write(`{"agent":"pi"}`)
 	m = press(m, key("k"), right, ctrlS)
