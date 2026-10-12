@@ -59,6 +59,9 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := s.nested(info.Root); err != nil {
+		return nil, err
+	}
 	if in.Mode == "write" {
 		if err := workspace.RequireClean(info); err != nil {
 			return nil, err
@@ -187,6 +190,9 @@ func (s *Service) Result(id string) (*Result, error) {
 }
 
 func (s *Service) Reply(in ReplyRequest) (*Submitted, error) {
+	if err := s.nested(""); err != nil {
+		return nil, err
+	}
 	prompt, err := Text(in.Message)
 	if err != nil {
 		return nil, err

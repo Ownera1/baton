@@ -112,7 +112,7 @@ stdio 提供 `baton_run`、`baton_status`、`baton_wait`、`baton_result`、`bat
 
 数据默认保存在 `~/.local/share/baton`，可通过 `BATON_HOME` 修改。每个 `tasks/<id>/` 保存原子更新的 `task.json`、原样的 `turn-n.stdout/stderr`、Codex 的 `turn-n.last`、`patch.diff`、`checks/turn-n/` 和 `worker.log`。`request.json` 是启动/续接信箱，`lock` 串行保护同一任务，`worker.pid` 记录启动 PID，`cancel-n` 是取消标记；只有 worker 写 `task.json`。同一个 BATON_HOME 下的 `check-gate.lock` 跨进程串行运行所有检查。
 
-安全边界：Baton 不 push、不切换用户分支、不传任何 bypass / skip-permissions / always-approve / danger-full-access 参数。worktree 隔离代码改动，Agent 仍沿用自身权限机制。**Pi write 没有沙箱**，结果中也会提示；用户提供的检查通过 `/bin/sh -c` 执行，同样没有安全沙箱。RSS 每秒采样，默认 3072 MB 上限，CPU 并行提示为 2、nice 为 10；这些限制不能约束主动脱离进程组的程序。应对所有实例使用同一 BATON_HOME 才能共享全机检查锁。
+安全边界：Baton 不 push、不切换用户分支、不传任何 bypass / skip-permissions / always-approve / danger-full-access 参数。子 Agent 不能再派活：worker 给 Agent 和检查设置 `BATON_DEPTH=1`，带着它的 `do`/`ask`/`run`/`reply`（含 MCP）直接报错；codex 启动 MCP 服务时不传父进程环境，所以还会沿父进程往上找 `baton _worker`（每级一次 `ps`），找到同样拒绝；仓库位于 `$BATON_HOME/tasks/` 下（任务 worktree）时也拒绝。worktree 隔离代码改动，Agent 仍沿用自身权限机制。**Pi write 没有沙箱**，结果中也会提示；用户提供的检查通过 `/bin/sh -c` 执行，同样没有安全沙箱。RSS 每秒采样，默认 3072 MB 上限，CPU 并行提示为 2、nice 为 10；这些限制不能约束主动脱离进程组的程序。应对所有实例使用同一 BATON_HOME 才能共享全机检查锁。
 
 已知限制：仅支持 macOS/Linux；PID 存活检查无法识别 PID 复用，意外死亡报告 stale；SIGKILL 无法执行 worker 的清理逻辑，可能遗留子进程。read 使用 Agent 的只读模式，允许源仓库已有改动；它不是独立的 OS 沙箱。任务、分支和 worktree 保留供审阅，暂未提供清理命令。未提供成本的 Agent 保持成本未知，不估算；result 的顶层回复/用量/成本属于最近一轮，历轮记录在 turns。适配器通过真实输出样本和假 Agent 验证，本项目测试不调用真实服务。
 

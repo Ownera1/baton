@@ -27,7 +27,7 @@ func (s *Service) spawnDetached(id, dir string) error {
 	defer devnull.Close()
 	cmd := exec.Command(self, "_worker", id)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = devnull, f, f
-	cmd.Env = append(os.Environ(), "BATON_HOME="+s.Home)
+	cmd.Env = append(os.Environ(), "BATON_HOME="+s.Home, DepthEnv+"=1")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start detached worker: %w", err)

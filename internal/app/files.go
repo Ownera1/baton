@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -80,6 +82,53 @@ func lock(dir string, nonblocking bool) (*os.File, error) {
 		return nil, fmt.Errorf("task is busy: %w", err)
 	}
 	return f, nil // close releases the cross-process lock
+}
+
+// DepthEnv is set to 1 for every worker, so agents and checks inherit it.
+const DepthEnv = "BATON_DEPTH"
+
+// nested refuses dispatch from inside a task: a worker's environment, a
+// worker among this process's ancestors (codex starts MCP servers without the
+// parent environment), or a repository inside a task worktree.
+// ponytail: depth fixed at one level; make it configurable if sub-agents should fan out.
+func (s *Service) nested(repo string) error {
+	if v := os.Getenv(DepthEnv); v != "" && v != "0" {
+		return fmt.Errorf("refusing to dispatch from inside a Baton task (%s=%s): sub-agents cannot dispatch further tasks", DepthEnv, v)
+	}
+	if pid := workerAncestor(); pid > 0 {
+		return fmt.Errorf("refusing to dispatch from inside a Baton task (worker pid %d started this process): sub-agents cannot dispatch further tasks", pid)
+	}
+	if repo == "" {
+		return nil
+	}
+	tasks, err := filepath.EvalSymlinks(filepath.Join(s.Home, "tasks"))
+	if err != nil {
+		return nil // no tasks yet, so no task worktrees
+	}
+	if real, err := filepath.EvalSymlinks(repo); err == nil {
+		repo = real
+	}
+	if rel, err := filepath.Rel(tasks, repo); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("refusing to dispatch from a Baton task worktree %s: reply to that task instead", repo)
+	}
+	return nil
+}
+
+// workerAncestor is the pid of a `baton _worker` that started this process, or 0.
+// ponytail: one ps per ancestor; read /proc or sysctl directly if dispatch latency matters.
+func workerAncestor() int {
+	for pid, depth := os.Getppid(), 0; pid > 1 && depth < 64; depth++ {
+		out, err := exec.Command("ps", "-ww", "-o", "ppid=", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+		if err != nil {
+			return 0 // ps unavailable or the process is gone; the other checks still apply
+		}
+		ppid, command, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
+		if strings.Contains(command+" ", " _worker ") {
+			return pid
+		}
+		pid, _ = strconv.Atoi(ppid)
+	}
+	return 0
 }
 
 func alive(pid int) bool {
