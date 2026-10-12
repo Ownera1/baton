@@ -23,6 +23,7 @@ baton wait a1b2c3d4 e5f6a7b8 -any          # 等多个任务，-any 等到第一
 baton do -base a1b2c3d4 补上测试            # 接着另一个写任务的分支继续
 baton result 2fa5f633                     # 结果、分支、检查、diffstat、最终回复
 baton agents                              # 可派的 Agent 和角色
+baton sessions -json                      # 当前仓库各任务的会话记录在哪
 baton config                              # 设置面板；管道或 -json 时打印各 Agent 实际用的模型、effort、可执行文件
 baton                                     # 打开面板（同 baton tui）
 ```
@@ -66,6 +67,10 @@ baton                                     # 打开面板（同 baton tui）
 `-group <名字>`（MCP 的 `group`）给一起完成同一目标的任务打标签，以 base 派出的任务不写时沿用 base 的组；`baton list -group 名字`、MCP `baton_list` 的 `group` 只列这一组，列表和面板里显示为 `#名字`。
 
 `baton wait` 可以写多个任务，默认等全部结束，`-any` 等到第一个结束就返回；MCP 的 `baton_wait` 传 `ids`（和 `any`），结果放在 `tasks` 里，单个 `id` 的返回不变。
+
+### 会话记录
+
+写任务在 worktree（`$BATON_HOME/tasks/<id>/wt`）里运行，claude、pi、grok 按运行目录存会话，这些记录不会归到仓库名下。`baton sessions` 列出当前仓库（`-repo` 指定其他仓库，`-all` 列出全部）每个任务的运行目录、Agent 自己的会话文件和 Baton 存的每轮输出（`turn-N.stdout`，完整事件流）；`-json` 供其他工具读取。会话文件按默认位置查找，跟随 `CLAUDE_CONFIG_DIR`、`CODEX_HOME`、`PI_CODING_AGENT_DIR`，找不到时只给 Baton 的那份。
 
 ### 角色
 

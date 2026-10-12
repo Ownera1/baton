@@ -29,6 +29,7 @@ const usage = `用法：
   baton wait [任务…] [-any]      等任务结束；写多个时等全部，-any 等到第一个
   baton result|status|cancel [任务]
   baton agents                   列出 Agent 和角色（.baton/agents/、~/.config/baton/agents/ 下的 *.md）
+  baton sessions [-repo 路径|-all]  列出仓库里任务的会话记录：运行目录、Agent 自己的会话文件、Baton 存的每轮输出
   baton list | tui | mcp | version
   baton config                   终端里打开设置面板；管道或 -json 时打印配置
 
@@ -342,6 +343,29 @@ func run(args []string) error {
 		}
 		for _, t := range list.Tasks {
 			fmt.Println(line(t))
+		}
+		return nil
+	case "sessions":
+		repo := fs.String("repo", ".", "git repository")
+		all := fs.Bool("all", false, "every repository")
+		if _, err := parse(fs, args[1:]); err != nil {
+			return err
+		}
+		if *all {
+			*repo = ""
+		}
+		sessions, err := svc.Sessions(*repo)
+		if err != nil || *asJSON {
+			return orEmit(map[string]any{"sessions": sessions}, err)
+		}
+		for _, s := range sessions {
+			fmt.Printf("%s %s · %s · %s · %s\n  目录 %s\n", short(s.Task), s.Title, s.Agent, modes[s.Mode], filepath.Base(s.Repo), s.Dir)
+			if s.Transcript != "" {
+				fmt.Println("  会话", s.Transcript)
+			}
+			for _, turn := range s.Turns {
+				fmt.Println("  轮次", turn)
+			}
 		}
 		return nil
 	}
