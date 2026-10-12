@@ -255,7 +255,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       <li><b>详情按对话展示</b>：每一轮的提问和回复上下排列，回复按 Markdown 渲染，工具调用默认折叠成一行。</li>
       <li><b>比例可调</b>：<kbd>[</kbd> <kbd>]</kbd> 每次 5%，<kbd>=</kbd> 复位，<kbd>z</kbd> 只看详情，也可以拖动分隔线；比例会记住。</li>
       <li><b>实时事件更好读</b>：每个工具调用一行，读文件、改文件、跑命令用不同符号，命令带退出码和耗时。</li>
-      <li><b>设置在同一个面板里</b>：按 <kbd>s</kbd>，左栏换成 <code>~/.config/baton/config.json</code> 的 23 项（全局 agent、timeout，面板 theme，每个 Agent 的 model、effort、path、hidden），右栏说明当前项：可选值、这个 Agent 的完整命令预览（配置带来的参数高亮）和保存后的文件（改动行标绿）。<kbd>←</kbd><kbd>→</kbd> 切换取值，<kbd>enter</kbd> 输入，<kbd>d</kbd> 恢复默认，<kbd>u</kbd> 撤销，<kbd>ctrl+s</kbd> 保存，<kbd>esc</kbd> 回到对话。切换 theme 时整个面板立即换色，默认跟随终端（这里即上方的浅色/深色按钮）。比例、分隔线和主题与对话模式共用，任务计数照常刷新；未保存的改动在顶栏提示，退出前要确认。<code>baton config</code> 在终端里直接以这个模式打开。</li>
+      <li><b>设置在同一个面板里</b>：按 <kbd>s</kbd>，左栏换成 <code>~/.config/baton/config.json</code> 的 24 项（全局 agent、timeout、max_parallel，面板 theme，每个 Agent 的 model、effort、path、hidden），右栏说明当前项：可选值、这个 Agent 的完整命令预览（配置带来的参数高亮）和保存后的文件（改动行标绿）。<kbd>←</kbd><kbd>→</kbd> 切换取值，<kbd>enter</kbd> 输入，<kbd>d</kbd> 恢复默认，<kbd>u</kbd> 撤销，<kbd>ctrl+s</kbd> 保存，<kbd>esc</kbd> 回到对话。切换 theme 时整个面板立即换色，默认跟随终端（这里即上方的浅色/深色按钮）。比例、分隔线和主题与对话模式共用，任务计数照常刷新；未保存的改动在顶栏提示，退出前要确认。<code>baton config</code> 在终端里直接以这个模式打开。</li>
       <li><b>浅色和深色两套主题</b>：默认跟随终端背景自动选择，也可以用 <kbd>--theme light</kbd> 或 <kbd>--theme dark</kbd> 固定。两套主题的状态色都单独调过，浅色背景上的黄色和青色更深，保证可读。</li>
     </ul>
   </section>
@@ -380,7 +380,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
   const FOUND = { codex: "~/.local/bin/codex", claude: "~/.local/bin/claude", grok: "~/.grok/bin/grok", agy: "~/.local/bin/agy", pi: "~/.local/bin/pi" };
   const EXISTS = new Set([...Object.values(FOUND), "/opt/homebrew/bin/codex", "/usr/local/bin/claude"]);
   const SAMPLE = {
-    agent: "", timeout: "", theme: "",
+    agent: "", timeout: "", max_parallel: "", theme: "",
     agents: {
       codex: { model: "gpt-5.5", effort: "high", path: "" },
       claude: { model: "opus", effort: "xhigh", path: "" },
@@ -401,6 +401,11 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       check: (v) => (!v || durationOK(v) ? "" : "格式如 90m、2h、1h30m"),
       shown: (v) => v || `<span class="def">默认（2h）</span>`,
       desc: "单轮上限，包含 Agent 和检查时间。命令行 <code>-timeout</code> 优先。" },
+    { g: "全局", agent: null, key: "max_parallel", label: "parallel", options: ["", "1", "2", "4", "8"],
+      get: (c) => c.max_parallel, set: (c, v) => (c.max_parallel = v),
+      check: (v) => (!v || /^\d+$/.test(v) ? "" : "max_parallel must be a whole number, 0 for no limit"),
+      shown: (v) => v || `<span class="def">默认（不限）</span>`,
+      desc: "同一个 <code>BATON_HOME</code> 下最多同时运行几轮任务（Agent 加检查），多出的保持排队，有空位再开始。派活时记下，之后改只影响新派的任务。" },
     { g: "面板", agent: null, key: "theme", options: ["", "light", "dark"],
       get: (c) => c.theme, set: (c, v) => (c.theme = v),
       check: (v) => (["", "auto", "light", "dark"].includes(v) ? "" : "只能是 auto、light 或 dark"),
@@ -441,6 +446,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
     if (c.agent) o.agent = c.agent;
     if (c.timeout) o.timeout = c.timeout;
     if (c.theme) o.theme = c.theme;
+    if (+c.max_parallel) o.max_parallel = +c.max_parallel;
     const agents = {};
     for (const a of [...AGENTS].sort()) {
       const x = {};
@@ -488,7 +494,7 @@ kbd { font: 600 11px var(--mono); color: var(--ink); background: var(--kbd); pad
       const bad = f.check && f.check(v), warn = f.warn && f.warn(v);
       const mark = bad ? `<span class="err">✗</span>` : v !== f.get(C.saved) ? `<span class="changed">●</span>` : warn ? `<span class="warn">!</span>` : "";
       const note = bad ? `<span class="fielderr">${esc(bad)}</span>` : warn ? `<span class="fielderr warn">${esc(warn)}</span>` : "";
-      html += `<div class="field${on ? " sel" : ""}" data-i="${i}"><span class="fk">${f.key}</span><span class="fv">${val}</span><span class="fm">${mark}</span>${note}</div>`;
+      html += `<div class="field${on ? " sel" : ""}" data-i="${i}"><span class="fk">${f.label || f.key}</span><span class="fv">${val}</span><span class="fm">${mark}</span>${note}</div>`;
     });
     return html;
   }

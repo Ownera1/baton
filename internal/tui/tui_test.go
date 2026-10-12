@@ -696,7 +696,7 @@ func TestSettingsMode(t *testing.T) {
 	}
 	enter, right, ctrlS := tea.KeyMsg{Type: tea.KeyEnter}, tea.KeyMsg{Type: tea.KeyRight}, tea.KeyMsg{Type: tea.KeyCtrlS}
 	write(`{"agents":{"codex":{"model":"gpt-5.5","effort":"high"}}}`)
-	m := press(refresh(newModel(svc, "dark")), key("s"), key("j"), key("j"), key("j"), key("j"), right)
+	m := press(refresh(newModel(svc, "dark")), key("s"), key("j"), key("j"), key("j"), key("j"), key("j"), right)
 	if !m.settingsMode || m.set.draft.Agents["codex"].Effort != "xhigh" {
 		t.Fatalf("codex effort did not cycle: %+v", m.set.draft)
 	}
@@ -723,7 +723,7 @@ func TestSettingsMode(t *testing.T) {
 	// An invalid path is flagged and blocks saving.
 	m = press(m, key("j"), key("j"), enter)
 	m = press(m, key("bin/codex"), enter, ctrlS)
-	if !strings.Contains(ansi.Strip(m.details()), "must be absolute") || !strings.Contains(read(), `"high"`) || m.set.cursor != 5 {
+	if !strings.Contains(ansi.Strip(m.details()), "must be absolute") || !strings.Contains(read(), `"high"`) || m.set.cursor != 6 {
 		t.Fatalf("invalid path saved:\n%s\n%s", read(), ansi.Strip(m.details()))
 	}
 	m = press(m, key("d"), ctrlS)
@@ -737,7 +737,7 @@ func TestSettingsMode(t *testing.T) {
 	if !m.set.draft.Agents["codex"].Hidden || !strings.Contains(view, "隐藏（主 Agent 看不到）") || !strings.Contains(view, `+       "hidden": true`) {
 		t.Fatalf("hidden toggle: %+v\n%s", m.set.draft, view)
 	}
-	if m = press(m, key("d"), key("k")); m.set.changed() != 0 || m.set.cursor != 5 {
+	if m = press(m, key("d"), key("k")); m.set.changed() != 0 || m.set.cursor != 6 {
 		t.Fatalf("hidden reset: %+v", m.set.draft)
 	}
 
@@ -752,7 +752,7 @@ func TestSettingsMode(t *testing.T) {
 	}
 
 	// Leaving keeps the draft; q asks before dropping it.
-	m = press(m, key("k"), key("k"), key("k"), key("k"), right, tea.KeyMsg{Type: tea.KeyEsc})
+	m = press(m, key("k"), key("k"), key("k"), key("k"), key("k"), right, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.settingsMode || m.set.changed() != 1 || !strings.Contains(m.notice, "未保存") {
 		t.Fatalf("esc: %v %d %q", m.settingsMode, m.set.changed(), m.notice)
 	}
@@ -828,15 +828,15 @@ func TestMouseFocusAndClicks(t *testing.T) {
 		t.Fatalf("wheel over details did not scroll them without focusing: %d", m.viewport.YOffset)
 	}
 
-	// Settings rows: 全局, agent, timeout, 面板, theme.
+	// Settings rows: 全局, agent, timeout, max_parallel, 面板, theme.
 	m, _ = update(m, tea.WindowSizeMsg{Width: 140, Height: 40})
 	m, _ = update(m, key("s"))
-	press(1, 2+4, tea.MouseButtonLeft)
-	if m.set.cursor != 2 {
+	press(1, 2+5, tea.MouseButtonLeft)
+	if m.set.cursor != 3 {
 		t.Fatalf("field click: %d", m.set.cursor)
 	}
-	press(1, 2+3, tea.MouseButtonLeft)
-	if m.set.cursor != 2 {
+	press(1, 2+4, tea.MouseButtonLeft)
+	if m.set.cursor != 3 {
 		t.Fatal("group header click moved the cursor")
 	}
 }
@@ -845,7 +845,7 @@ func TestThemeSetting(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("BATON_CONFIG_DIR", dir)
 	m := newModel(&app.Service{Home: t.TempDir()}, "dark")
-	for _, k := range []tea.KeyMsg{key("s"), key("j"), key("j")} {
+	for _, k := range []tea.KeyMsg{key("s"), key("j"), key("j"), key("j")} {
 		m, _ = update(m, k)
 	}
 	if m.theme != "dark" || !strings.Contains(ansi.Strip(m.View()), "theme") {
@@ -866,5 +866,23 @@ func TestThemeSetting(t *testing.T) {
 	m, _ = update(m, key("blue"))
 	if m, _ = update(m, tea.KeyMsg{Type: tea.KeyEnter}); m.set.draft.Theme != "blue" || !strings.Contains(ansi.Strip(m.details()), "not auto, light or dark") {
 		t.Fatal("invalid theme not flagged")
+	}
+}
+
+func TestMaxParallelSetting(t *testing.T) {
+	t.Setenv("BATON_CONFIG_DIR", t.TempDir())
+	m := newModel(&app.Service{Home: t.TempDir()}, "dark")
+	right, enter := tea.KeyMsg{Type: tea.KeyRight}, tea.KeyMsg{Type: tea.KeyEnter}
+	for _, k := range []tea.KeyMsg{key("s"), key("j"), key("j"), right, right} {
+		m, _ = update(m, k)
+	}
+	if m.set.draft.MaxParallel != 2 || !strings.Contains(ansi.Strip(m.details()), `"max_parallel": 2`) {
+		t.Fatalf("max_parallel: %+v", m.set.draft)
+	}
+	for _, k := range []tea.KeyMsg{enter, {Type: tea.KeyCtrlU}, key("two"), enter} {
+		m, _ = update(m, k)
+	}
+	if !strings.Contains(ansi.Strip(m.details()), "max_parallel must be") {
+		t.Fatal("typo not flagged")
 	}
 }

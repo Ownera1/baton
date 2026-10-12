@@ -44,6 +44,7 @@ type executable struct {
 // accepts typed input. "" means the default.
 type field struct {
 	agent, key string // agent is empty for global fields
+	label      string // shorter list label than key, which the title and file use
 	group      string // list heading when not an agent's; default 全局
 	options    []string
 	get        func(app.Config) string
@@ -66,6 +67,17 @@ func settingsFields() []field {
 			get: func(c app.Config) string { return c.Agent }, set: func(c *app.Config, v string) { c.Agent = v }},
 		{key: "timeout", options: []string{"", "30m", "1h", "2h", "4h"},
 			get: func(c app.Config) string { return c.Timeout }, set: func(c *app.Config, v string) { c.Timeout = v }},
+		{key: "max_parallel", label: "parallel", options: []string{"", "1", "2", "4", "8"},
+			get: func(c app.Config) string {
+				return map[bool]string{true: strconv.Itoa(c.MaxParallel)}[c.MaxParallel != 0]
+			},
+			set: func(c *app.Config, v string) {
+				n, err := strconv.Atoi(v)
+				if err != nil && v != "" {
+					n = -1 // Validate rejects it, so a typo is flagged instead of dropped
+				}
+				c.MaxParallel = n
+			}},
 		{group: "面板", key: "theme", options: []string{"", "light", "dark"},
 			get: func(c app.Config) string { return c.Theme }, set: func(c *app.Config, v string) { c.Theme = v }},
 	}
@@ -119,6 +131,8 @@ func (f field) help() string {
 		return "baton do、ask 和 MCP 没指定 Agent 时用哪个。环境变量 BATON_AGENT 优先于这里。"
 	case "timeout":
 		return "单轮上限，包含 Agent 和检查时间。命令行 -timeout 优先。"
+	case "max_parallel":
+		return "同一个 BATON_HOME 下最多同时运行几轮任务（Agent 加检查），多出的保持排队，有空位再开始。派活时记下，之后改只影响新派的任务。"
 	case "theme":
 		return "面板配色。默认跟随终端背景；切换时立即预览，ctrl+s 保存后下次打开也用它。命令行 -theme 优先。"
 	case "model":
@@ -364,7 +378,7 @@ func (m model) settingsLines(w int) ([]string, []int, int) {
 		val := m.fieldValue(f, v)
 		if i == s.cursor && s.editing {
 			in := s.input
-			in.Width = max(1, w-15)
+			in.Width = max(1, w-16)
 			val = in.View()
 		} else if i == s.cursor && f.options != nil {
 			val = p.text(p.accent).Render("‹ ") + val + p.text(p.accent).Render(" ›")
@@ -381,14 +395,14 @@ func (m model) settingsLines(w int) ([]string, []int, int) {
 		}
 		stripe := p.text(bar).Background(bg).Render("▎")
 		style := p.text(p.ink).Background(bg)
-		left := stripe + "  " + p.text(p.dim).Render(fmt.Sprintf("%-8s", f.key)) + val
+		left := stripe + "  " + p.text(p.dim).Render(fmt.Sprintf("%-9s", cmp.Or(f.label, f.key))) + val
 		lines, owners = append(lines, paint(rightRow(left, mark, max(1, w-1)), style, w)), append(owners, i)
 		note, color := warn, p.wait
 		if err != nil {
 			note, color = err.Error(), p.bad
 		}
 		if note != "" {
-			lines, owners = append(lines, paint(stripe+strings.Repeat(" ", 11)+p.text(color).Render(fit(note, max(1, w-13))), style, w)), append(owners, i)
+			lines, owners = append(lines, paint(stripe+strings.Repeat(" ", 12)+p.text(color).Render(fit(note, max(1, w-14))), style, w)), append(owners, i)
 		}
 	}
 	return lines, owners, selected
@@ -411,6 +425,8 @@ func (m model) fieldValue(f field, v string) string {
 		text = "默认（" + app.Config{}.DefaultAgent() + "）"
 	case "timeout":
 		text = "默认（" + shortDuration(app.DefaultTimeout) + "）"
+	case "max_parallel":
+		text = "默认（不限）"
 	case "theme":
 		text = "默认（跟随终端，当前" + map[bool]string{true: "深色", false: "浅色"}[m.darkTerminal] + "）"
 	case "path":

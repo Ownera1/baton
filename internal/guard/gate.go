@@ -39,6 +39,15 @@ func NewGate(dir string) (*Gate, error) {
 	return &Gate{path: filepath.Join(dir, "check-gate.lock")}, nil
 }
 
+// NewSlotGate is slot i of several, for limits above one such as max_parallel.
+func NewSlotGate(dir string, i int) (*Gate, error) {
+	slots := filepath.Join(dir, "slots")
+	if err := os.MkdirAll(slots, 0o755); err != nil {
+		return nil, err
+	}
+	return &Gate{path: filepath.Join(slots, fmt.Sprintf("%d.lock", i))}, nil
+}
+
 // Lease is an acquired slot. Releasing it is idempotent.
 type Lease struct {
 	file     *os.File

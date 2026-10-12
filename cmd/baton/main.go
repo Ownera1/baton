@@ -36,6 +36,7 @@ const usage = `用法：
 常用参数（可写在任意位置）：-w 等完成并打印结果  -check 命令  -no-check  -title 标题
   -repo 路径（默认当前目录）  -model  -effort  -timeout（默认 2h）  -json
   -base 任务：接着另一个写任务做（do 从它的分支继续，ask 在它的 worktree 里只读）
+  -group 名字：给一起完成同一目标的任务打标签，baton list -group 名字 只看这一组
 各 Agent 的默认模型、effort、可执行文件写在 ~/.config/baton/config.json，baton config 查看。`
 
 type checks []string
@@ -152,6 +153,7 @@ func run(args []string) error {
 		fs.StringVar(&req.Repo, "repo", "", "git repository (default: current directory)")
 		fs.StringVar(&req.Task, "task", "", "text or @file")
 		fs.StringVar(&req.Base, "base", "", "finished write task to continue from")
+		fs.StringVar(&req.Group, "group", "", "label for tasks working on one goal")
 		fs.StringVar(&req.Title, "title", "", "conversation title (inferred from task when omitted)")
 		fs.StringVar(&req.Model, "model", "", "model (default: Baton config, then the agent's own config)")
 		fs.StringVar(&req.Effort, "effort", "", "reasoning effort (default: Baton config, then the agent's own config)")
@@ -330,10 +332,11 @@ func run(args []string) error {
 		}
 		return nil
 	case "list", "ls":
+		group := fs.String("group", "", "only tasks in this group")
 		if _, err := parse(fs, args[1:]); err != nil {
 			return err
 		}
-		list, err := svc.List()
+		list, err := svc.List(*group)
 		if err != nil || *asJSON {
 			return orEmit(list, err)
 		}
@@ -409,7 +412,11 @@ func title(t *app.Task) string {
 
 // line is one row: short id, status, title, agent, mode, turns, repo.
 func line(t *app.Task) string {
-	return fmt.Sprintf("%s %s %s · %s · %s · %s · 第 %d 轮 · %s", short(t.ID), glyphs[t.Status], t.Status, title(t), t.Who(), modes[t.Mode], len(t.Turns), filepath.Base(t.Repo))
+	group := ""
+	if t.Group != "" {
+		group = " · #" + t.Group
+	}
+	return fmt.Sprintf("%s %s %s · %s · %s · %s · 第 %d 轮 · %s%s", short(t.ID), glyphs[t.Status], t.Status, title(t), t.Who(), modes[t.Mode], len(t.Turns), filepath.Base(t.Repo), group)
 }
 
 func printResult(r *app.Result) {
@@ -469,7 +476,7 @@ func printConfig(asJSON bool) error {
 	}
 	if asJSON {
 		return emit(map[string]any{"path": path, "exists": raw != nil, "agent": cfg.DefaultAgent(),
-			"timeout": cfg.TurnTimeout().String(), "theme": cmp.Or(cfg.Theme, "auto"), "agents": agents})
+			"timeout": cfg.TurnTimeout().String(), "theme": cmp.Or(cfg.Theme, "auto"), "max_parallel": cfg.MaxParallel, "agents": agents})
 	}
 	note := ""
 	if raw == nil {
@@ -480,7 +487,11 @@ func printConfig(asJSON bool) error {
 	if os.Getenv("BATON_AGENT") != "" {
 		source = "（BATON_AGENT）"
 	}
-	fmt.Printf("默认 Agent %s%s · 超时 %s · 主题 %s\n", cfg.DefaultAgent(), source, cfg.TurnTimeout(), cmp.Or(cfg.Theme, "auto"))
+	parallel := "不限"
+	if cfg.MaxParallel > 0 {
+		parallel = fmt.Sprint(cfg.MaxParallel)
+	}
+	fmt.Printf("默认 Agent %s%s · 超时 %s · 主题 %s · 同时运行 %s\n", cfg.DefaultAgent(), source, cfg.TurnTimeout(), cmp.Or(cfg.Theme, "auto"), parallel)
 	or := func(s string) string { return cmp.Or(s, "默认") }
 	for _, name := range app.Agents {
 		v := agents[name]
