@@ -400,7 +400,7 @@ printf 'raw stderr\n' >&2
 	}
 	defer conn.Close()
 	tools, err := conn.ListTools(ctx, nil)
-	if err != nil || len(tools.Tools) != 8 {
+	if err != nil || len(tools.Tools) != 9 {
 		t.Fatalf("MCP tools: %+v %v", tools, err)
 	}
 	out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_result", Arguments: map[string]any{"id": held.ID}})

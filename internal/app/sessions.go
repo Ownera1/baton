@@ -40,6 +40,14 @@ var transcripts = map[string]struct{ env, dir, glob string }{
 	"agy":    {"", ".gemini/antigravity-cli", "conversations/%s.db"},
 }
 
+func repoRoot(dir string) (string, error) {
+	root, err := workspace.Git(dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return "", fmt.Errorf("%s is not inside a git repository: %w", dir, err)
+	}
+	return root, nil
+}
+
 func transcript(agent, id string) string {
 	p, ok := transcripts[agent]
 	if !ok || id == "" || strings.ContainsAny(id, `*?[]/\`) {
@@ -64,9 +72,9 @@ func transcript(agent, id string) string {
 // or of every task when repo is "", newest first.
 func (s *Service) Sessions(repo string) ([]Session, error) {
 	if repo != "" {
-		root, err := workspace.Git(repo, "rev-parse", "--show-toplevel")
+		root, err := repoRoot(repo)
 		if err != nil {
-			return nil, fmt.Errorf("%s is not inside a git repository: %w", repo, err)
+			return nil, err
 		}
 		repo = root
 	}
@@ -93,11 +101,7 @@ func (s *Service) Sessions(repo string) ([]Session, error) {
 		for i, turn := range t.Turns {
 			turns[i] = filepath.Join(s.Home, "tasks", t.ID, fmt.Sprintf("turn-%d.stdout", turn.Number))
 		}
-		title := t.Title
-		if title == "" && len(t.Turns) > 0 {
-			title = TitleFromPrompt(t.Turns[0].Prompt)
-		}
-		out = append(out, Session{Repo: t.Repo, Task: t.ID, Title: title, Agent: t.Agent, Mode: t.Mode, Status: t.Status,
+		out = append(out, Session{Repo: t.Repo, Task: t.ID, Title: t.Name(), Agent: t.Agent, Mode: t.Mode, Status: t.Status,
 			Dir: dir, SessionID: t.SessionID, Transcript: transcript(t.Agent, t.SessionID), Turns: turns, CreatedAt: t.CreatedAt})
 	}
 	return out, nil

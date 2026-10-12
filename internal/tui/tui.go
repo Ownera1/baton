@@ -97,6 +97,10 @@ type cancelMsg struct {
 	id  string
 	err error
 }
+type exportMsg struct {
+	out *app.ExportResult
+	err error
+}
 
 func newModel(svc *app.Service, themes ...string) model {
 	m := model{svc: svc, width: 120, height: 30, now: time.Now(), ratio: 38, darkTerminal: lipgloss.HasDarkBackground(),
@@ -273,6 +277,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.noticeUntil = m.now.Add(3 * time.Second)
 		m.syncViewport()
 		return m, m.refresh()
+	case exportMsg:
+		if msg.err != nil {
+			m.notice = "导出失败: " + msg.err.Error()
+		} else {
+			m.notice = "已导出 · .baton/history/" + filepath.Base(msg.out.Files[0])
+		}
+		m.noticeUntil = m.now.Add(5 * time.Second)
 	case tea.MouseMsg:
 		lw, lh, _, _ := m.layout()
 		separator := !m.zoom && ((m.width >= 100 && msg.X == lw && msg.Y >= 1 && msg.Y < m.height-1) || (m.width < 100 && msg.Y == lh+1))
@@ -357,6 +368,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			if t := m.task(); t != nil && (t.Status == "queued" || t.Status == "running" || t.Status == "stale") {
 				m.cancelID, m.cancelTitle = t.ID, taskTitle(t)
+			}
+		case "x":
+			if t := m.task(); t != nil {
+				id := t.ID
+				return m, func() tea.Msg {
+					out, err := m.svc.Export(app.ExportRequest{IDs: []string{id}})
+					return exportMsg{out, err}
+				}
 			}
 		case "up", "k", "down", "j":
 			if !m.detail && !m.zoom {
