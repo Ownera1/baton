@@ -156,7 +156,7 @@ func (s *Service) Worker(id string) (retErr error) {
 	}
 	prefix := "只读，不要修改文件。\n\n"
 	if t.Mode == "write" {
-		prefix = "你在隔离的 git worktree 里工作，不要 push，不要切换分支；结束时用几句话总结改了什么、怎么验证的。\n\n"
+		prefix = "你在隔离的 git worktree 里工作，不要 push，不要切换分支，也不用提交，Baton 在本轮结束时提交；结束时用几句话总结改了什么、怎么验证的。\n\n"
 	}
 	if req.Number == 1 {
 		prefix += hint

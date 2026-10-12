@@ -11,14 +11,34 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+// instructions tell the main agent how to work with sub-agents; clients put
+// them in the model's context at connection time.
+const instructions = `Baton runs coding tasks on sub-agents in detached workers. You plan, split, choose and judge; a sub-agent only knows what you put in task. Each write task works in its own git worktree on branch baton/<id> and is checked by the project's tests; Baton never merges, pushes or switches the user's branch.
+
+Start with baton_agents: it lists the agents and the user's roles you may use, with what each is for. Prefer a role whose description fits. Give every task a short title.
+
+Patterns:
+- One task: baton_run, then baton_wait (at most 600 s per call; call again while it runs) and baton_result for the reply, branch, patch and checks.
+- Parallel: dispatch independent tasks that touch different files with the same group, then baton_wait with ids; with any, handle each as it finishes. Tasks may stay queued when the user limits how many run at once.
+- Best of N: send the same task to two agents and keep the better patch by its checks and your reading.
+- Review loop: when a write task finishes, baton_run a read task (a reviewer role if one exists) with base set to it; send real problems back with baton_reply to the writer, not a new task.
+- Relay: base a write task on a finished one to continue its branch, for example tests after an implementation.
+- Merging is yours, after review: sub-agents cannot merge, their sandboxes block git writes. Review every finished branch yourself, reading the patch and checks from baton_result and adding a reviewer task when it helps; then merge the approved baton/<id> branches into the user's branch with your own git tools, resolving conflicts yourself or replying to the task that caused them.
+
+Sub-agents cannot dispatch tasks and never talk to each other: results reach the next task only through you, in task or reply, or through base. When checks fail, reply with the failure instead of starting over. Never work around a sandbox refusal by moving the task to an agent with a weaker sandbox (pi write has none); tell the user instead. Finish by reporting what you merged, and which branches you left out and why.`
+
 func Serve(version string) error {
 	svc, err := app.New()
 	if err != nil {
 		return err
 	}
-	srv := mcp.NewServer(&mcp.Implementation{Name: "baton", Version: version}, nil)
+	return server(version, svc).Run(context.Background(), &mcp.StdioTransport{})
+}
+
+func server(version string, svc *app.Service) *mcp.Server {
+	srv := mcp.NewServer(&mcp.Implementation{Name: "baton", Version: version}, &mcp.ServerOptions{Instructions: instructions})
 	register(srv, svc)
-	return srv.Run(context.Background(), &mcp.StdioTransport{})
+	return srv
 }
 
 // waited is one task, as before ids existed, or the tasks asked for by ids.
