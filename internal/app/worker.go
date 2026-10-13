@@ -173,8 +173,9 @@ func (s *Service) Worker(id string) (retErr error) {
 	if err := os.MkdirAll(cache, 0700); err != nil {
 		return err
 	}
-	argv, err := agent.Argv(t.Agent, agent.Options{Path: t.AgentPath, Mode: t.Mode, Dir: runDir, Prompt: prefix + req.Prompt,
-		Model: t.Model, Effort: t.Effort, SessionID: t.SessionID, LastFile: lastFile, Cache: cache})
+	opts := agent.Options{Path: t.AgentPath, Mode: t.Mode, Dir: runDir, Prompt: prefix + req.Prompt,
+		Model: t.Model, Effort: t.Effort, SessionID: t.SessionID, LastFile: lastFile, Cache: cache}
+	argv, err := agent.Argv(t.Agent, opts)
 	if err != nil {
 		return err
 	}
@@ -201,7 +202,7 @@ func (s *Service) Worker(id string) (retErr error) {
 	if agent.PromptOnStdin(t.Agent) {
 		stdin = strings.NewReader(prefix + req.Prompt)
 	}
-	cr := workspace.RunArgv(runDir, argv, stdin, os.Environ(), workspace.RunOptions{
+	cr := workspace.RunArgv(runDir, argv, stdin, append(os.Environ(), agent.Env(t.Agent, opts)...), workspace.RunOptions{
 		Context: ctx, Limits: limits, Stdout: out, Stderr: errout, Note: func(msg string) { fmt.Fprintln(os.Stderr, msg) },
 	})
 	turn.ExitCode = cr.ExitCode

@@ -174,3 +174,15 @@ func TestCodexTransientErrorIsWarning(t *testing.T) {
 		t.Fatal("an error without turn.completed must fail")
 	}
 }
+
+// grok's write sandbox only lets go build cache under the temporary directory.
+func TestEnv(t *testing.T) {
+	if got := Env("grok", Options{Mode: "write"}); len(got) != 1 || got[0] != "GOCACHE="+filepath.Join(os.TempDir(), "baton-go-build") {
+		t.Fatalf("grok write: %q", got)
+	}
+	for _, o := range []struct{ name, mode string }{{"grok", "read"}, {"codex", "write"}, {"claude", "write"}} {
+		if got := Env(o.name, Options{Mode: o.mode}); got != nil {
+			t.Errorf("%s %s: %q", o.name, o.mode, got)
+		}
+	}
+}
