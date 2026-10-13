@@ -160,7 +160,8 @@ printf 'raw stderr\n' >&2
 		t.Fatalf("source changed: %+v %v", source, err)
 	}
 	log, err := os.ReadFile(argvLog)
-	if err != nil || !bytes.Contains(log, []byte("resume\n")) || !bytes.Contains(log, []byte("sandbox_mode=\"workspace-write\"")) || !bytes.Contains(log, []byte("-m\ncfg-model\n")) {
+	if err != nil || !bytes.Contains(log, []byte("resume\n")) || !bytes.Contains(log, []byte("sandbox_mode=\"workspace-write\"")) || !bytes.Contains(log, []byte("-m\ncfg-model\n")) ||
+		!bytes.Contains(log, []byte(`shell_environment_policy.set.GOCACHE="`+filepath.Join(home, "cache", "go-build")+`"`)) {
 		t.Fatalf("resume arguments: %q %v", log, err)
 	}
 	// Sub-agents cannot dispatch: the worker environment and task worktrees refuse it.

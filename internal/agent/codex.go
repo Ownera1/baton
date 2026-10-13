@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -27,6 +28,14 @@ func codexArgv(o Options) []string {
 	}
 	if o.Effort != "" {
 		a = append(a, "-c", "model_reasoning_effort="+strconv.Quote(o.Effort))
+	}
+	if o.Mode == "write" && o.Cache != "" {
+		// The sandbox blocks the default Go cache, so codex would make one in
+		// the worktree (.cache/go-build, hundreds of MB) for Baton to commit.
+		// This also drops the user's own writable_roots: a task writes only
+		// its worktree and the cache.
+		a = append(a, "-c", "sandbox_workspace_write.writable_roots=["+strconv.Quote(o.Cache)+"]",
+			"-c", "shell_environment_policy.set.GOCACHE="+strconv.Quote(filepath.Join(o.Cache, "go-build")))
 	}
 	a = append(a, "--")
 	if o.SessionID != "" {

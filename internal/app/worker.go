@@ -167,8 +167,12 @@ func (s *Service) Worker(id string) (retErr error) {
 		}
 	}
 	lastFile := filepath.Join(dir, fmt.Sprintf("turn-%d.last", req.Number))
+	cache := filepath.Join(s.Home, "cache")
+	if err := os.MkdirAll(cache, 0700); err != nil {
+		return err
+	}
 	argv, err := agent.Argv(t.Agent, agent.Options{Path: t.AgentPath, Mode: t.Mode, Dir: runDir, Prompt: prefix + req.Prompt,
-		Model: t.Model, Effort: t.Effort, SessionID: t.SessionID, LastFile: lastFile})
+		Model: t.Model, Effort: t.Effort, SessionID: t.SessionID, LastFile: lastFile, Cache: cache})
 	if err != nil {
 		return err
 	}

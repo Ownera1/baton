@@ -140,6 +140,16 @@ func TestArgvModesAndResume(t *testing.T) {
 	if got := codexArgv(o); !reflect.DeepEqual(got, []string{"exec", "-s", "read-only", "-C", "/repo path", "-c", `approval_policy="never"`, "--json", "-o", "/turn.last", "-m", "model", "-c", "model_reasoning_effort=\"high\"", "--", "-"}) {
 		t.Fatal(got)
 	}
+	// A codex write task shares one Go cache outside its worktree; a read task cannot write.
+	o.Cache = "/baton/cache"
+	if got := strings.Join(codexArgv(o), " "); strings.Contains(got, "GOCACHE") {
+		t.Fatal(got)
+	}
+	o.Mode = "write"
+	if got := strings.Join(codexArgv(o), " "); !strings.Contains(got, `-c sandbox_workspace_write.writable_roots=["/baton/cache"] -c shell_environment_policy.set.GOCACHE="/baton/cache/go-build" --`) {
+		t.Fatal(got)
+	}
+	o.Mode, o.Cache = "read", ""
 	// codex and claude read the prompt from stdin, so its size is not capped by argv.
 	if got := claudeArgv(o); !PromptOnStdin("codex") || !PromptOnStdin("claude") || slices.Contains(got, "task") {
 		t.Fatalf("prompt on argv: %v", got)
