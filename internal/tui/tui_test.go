@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -912,6 +913,8 @@ func TestRoleSettings(t *testing.T) {
 	m, _ := update(newModel(&app.Service{Home: t.TempDir()}, "dark"), key("s"))
 	at := func(role, k string) {
 		t.Helper()
+		m.set.role = role
+		m.set.refields()
 		if m.set.cursor = m.set.fieldAt(role, k); m.set.cursor < 0 {
 			t.Fatalf("no field %s.%s", role, k)
 		}
@@ -942,7 +945,7 @@ func TestRoleSettings(t *testing.T) {
 	if r.Agent != "claude" || r.Effort != "low" || r.Mode != "" || m.set.changed() != 3 {
 		t.Fatalf("draft: %+v %d", r, m.set.changed())
 	}
-	for _, want := range []string{"角色 DRAWER", "默认（读写都可）", "+ agent: claude", "+ effort: low", "--effort low", "Rules."} {
+	for _, want := range []string{"drawer  2/2 · 全局", "默认（读写都可）", "+ agent: claude", "+ effort: low", "--effort low", "Rules."} {
 		if want == "Rules." {
 			at("drawer", "file")
 			view = ansi.Strip(m.View() + m.details())
@@ -954,12 +957,19 @@ func TestRoleSettings(t *testing.T) {
 	if cmd := press(enter); cmd != nil || !strings.Contains(m.notice, "先 ctrl+s") {
 		t.Fatal("editor opened over unsaved changes")
 	}
+	// Switching roles keeps the draft; the overview marks it.
+	at("drawer", "name")
+	press(right)
+	if m.set.role != "broken" || m.set.changed() != 3 || !strings.Contains(ansi.Strip(m.details()), "● drawer") {
+		t.Fatalf("switch: %q %d\n%s", m.set.role, m.set.changed(), ansi.Strip(m.details()))
+	}
 	press(ctrlS)
 	if got := read("drawer.md"); m.set.changed() != 0 || got != "---\n# keep\ndescription: Draws\nagent: claude\neffort: low\n---\n\nRules.\n" {
 		t.Fatalf("save: %d %q %q", m.set.changed(), got, m.notice)
 	}
 
 	// The editor runs on a saved role; its edits are read back.
+	at("drawer", "file")
 	if cmd := press(enter); cmd == nil {
 		t.Fatal("editor not opened")
 	}
@@ -969,23 +979,39 @@ func TestRoleSettings(t *testing.T) {
 		t.Fatalf("reload: %+v", r)
 	}
 
-	// n adds a role; it saves once described, and d on its file drops it.
-	press(key("n"), key("Bad"), enter)
-	if !m.set.naming || !strings.Contains(m.notice, "lowercase") {
+	// The name row searches roles; a name no role has creates one, which
+	// saves once described, and d on its file drops it.
+	at("drawer", "name")
+	press(enter, key("dra"))
+	if view := ansi.Strip(m.View()); !strings.Contains(view, "> drawer  Draws more") || !strings.Contains(view, "dra  新建全局角色") {
+		t.Fatalf("search:\n%s", view)
+	}
+	press(tea.KeyMsg{Type: tea.KeyEsc})
+	at("broken", "name")
+	press(enter, key("dra"), enter)
+	if m.set.editing || m.set.role != "drawer" {
+		t.Fatalf("search did not open drawer: %q", m.set.role)
+	}
+	press(enter, key("Bad"), enter)
+	if !m.set.editing || !strings.Contains(m.notice, "lowercase") {
 		t.Fatal("bad name accepted")
 	}
 	press(tea.KeyMsg{Type: tea.KeyCtrlU}, key("tester"), enter, ctrlS)
-	if m.set.naming || m.set.changed() != 1 || !strings.Contains(m.notice, "有误") || read("tester.md") != "" {
+	if m.set.editing || m.set.role != "tester" || m.set.changed() != 1 || !strings.Contains(m.notice, "有误") || read("tester.md") != "" {
 		t.Fatalf("new role saved without description: %q", m.notice)
 	}
 	press(enter, key("Tests"), enter, ctrlS)
 	if got := read("tester.md"); got != "---\ndescription: Tests\n---\n" || m.set.changed() != 0 {
 		t.Fatalf("new role: %q %q", got, m.notice)
 	}
-	press(key("n"), key("scratch"), enter)
+	at("tester", "name")
+	press(enter, key("scratch"), enter)
 	at("scratch", "file")
-	if press(key("d")); m.set.changed() != 0 || m.set.fieldAt("scratch", "file") >= 0 {
+	if press(key("d")); m.set.changed() != 0 || m.set.draft.Roles["scratch"].Name != "" || m.set.role != "broken" {
 		t.Fatal("d did not drop the new role")
+	}
+	if got := rank([]string{"preview", "code-reviewer", "reviewer", "drawer"}, "Rev"); !slices.Equal(got, []string{"reviewer", "code-reviewer", "preview"}) {
+		t.Fatalf("rank: %v", got)
 	}
 	assertSize(t, m.View(), m.width, m.height)
 }

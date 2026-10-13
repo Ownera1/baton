@@ -31,11 +31,12 @@ type settings struct {
 	raw          []byte // the file as loaded, nil when missing; SaveConfig refuses if it changed
 	err          error  // load error; fields are read-only until r reloads
 	saved, draft values
-	fields       []field // the config fields, then each role's
+	fields       []field // the config fields, the role name row, then the shown role's
+	role         string  // the role shown below the name row
+	pick         int     // the highlighted match while the name row is searched
 	exe          map[string]executable
 	cursor       int
 	editing      bool
-	naming       bool // the input is a new role's name
 	input        textinput.Model
 	quit         bool   // q pressed with unsaved changes; a second q quits
 	shownTheme   string // the theme value the panel last applied, to preview edits live
@@ -66,7 +67,7 @@ type field struct {
 	group            string // list heading when not an agent's; default 全局
 	options          []string
 	get              func(values) string
-	set              func(*values, string) // nil for a role's file, which opens in an editor
+	set              func(*values, string) // nil for the role name row and a role's file
 }
 
 // Levels listed by each CLI's --help; grok lists none.
@@ -129,50 +130,83 @@ func settingsFields() []field {
 	return fs
 }
 
-// roleFields edit each role's front matter, then open its file in an editor;
-// a role whose file is broken only has the file.
-func roleFields(d values, global string) []field {
-	var fs []field
-	for _, name := range slices.Sorted(maps.Keys(d.Roles)) {
-		group := "角色 " + name
-		if filepath.Dir(d.Roles[name].Path) != global {
-			group += " · 仓库"
-		}
-		file := field{role: name, key: "file", group: group, get: func(v values) string { return v.Roles[name].Path }}
-		if d.Roles[name].Err != nil {
-			fs = append(fs, file)
-			continue
-		}
-		update := func(v *values, edit func(*app.Role)) {
-			r := v.Roles[name]
-			edit(&r)
-			v.Roles = maps.Clone(v.Roles) // copy on write, as for agents
-			if v.Roles == nil {
-				v.Roles = map[string]app.Role{}
-			}
-			v.Roles[name] = r
-		}
-		one := func(key, label string, options []string, p func(*app.Role) *string) field {
-			return field{role: name, key: key, label: label, group: group, options: options,
-				get: func(v values) string { r := v.Roles[name]; return *p(&r) },
-				set: func(v *values, s string) { update(v, func(r *app.Role) { *p(r) = s }) }}
-		}
-		fs = append(fs,
-			one("description", "desc", nil, func(r *app.Role) *string { return &r.Description }),
-			one("agent", "", append([]string{""}, app.Agents...), func(r *app.Role) *string { return &r.Agent }),
-			one("model", "", nil, func(r *app.Role) *string { return &r.Model }),
-			one("effort", "", nil, func(r *app.Role) *string { return &r.Effort }),
-			one("mode", "", []string{"", "read", "write"}, func(r *app.Role) *string { return &r.Mode }),
-			field{role: name, key: "hidden", group: group, options: []string{"", "true"},
-				get: func(v values) string { return map[bool]string{true: "true"}[v.Roles[name].Hidden] },
-				set: func(v *values, s string) { update(v, func(r *app.Role) { r.Hidden = s == "true" }) }},
-			file)
+// roleFields edit a role's front matter, then open its file in an editor; a
+// role whose file is broken only has the file.
+func roleFields(d values, name string) []field {
+	file := field{role: name, key: "file", group: "角色", get: func(v values) string { return v.Roles[name].Path }}
+	if d.Roles[name].Err != nil {
+		return []field{file}
 	}
-	return fs
+	update := func(v *values, edit func(*app.Role)) {
+		r := v.Roles[name]
+		edit(&r)
+		v.Roles = maps.Clone(v.Roles) // copy on write, as for agents
+		if v.Roles == nil {
+			v.Roles = map[string]app.Role{}
+		}
+		v.Roles[name] = r
+	}
+	one := func(key, label string, options []string, p func(*app.Role) *string) field {
+		return field{role: name, key: key, label: label, group: "角色", options: options,
+			get: func(v values) string { r := v.Roles[name]; return *p(&r) },
+			set: func(v *values, s string) { update(v, func(r *app.Role) { *p(r) = s }) }}
+	}
+	return []field{
+		one("description", "desc", nil, func(r *app.Role) *string { return &r.Description }),
+		one("agent", "", append([]string{""}, app.Agents...), func(r *app.Role) *string { return &r.Agent }),
+		one("model", "", nil, func(r *app.Role) *string { return &r.Model }),
+		one("effort", "", nil, func(r *app.Role) *string { return &r.Effort }),
+		one("mode", "", []string{"", "read", "write"}, func(r *app.Role) *string { return &r.Mode }),
+		{role: name, key: "hidden", group: "角色", options: []string{"", "true"},
+			get: func(v values) string { return map[bool]string{true: "true"}[v.Roles[name].Hidden] },
+			set: func(v *values, s string) { update(v, func(r *app.Role) { r.Hidden = s == "true" }) }},
+		file,
+	}
+}
+
+// roleNames are the draft's roles, sorted.
+func (v values) roleNames() []string { return slices.Sorted(maps.Keys(v.Roles)) }
+
+// rank keeps the names containing q, ignoring case: those starting with it
+// first, then those with a hyphenated word starting with it, then the rest,
+// each in the given order. Same ranking as rag-go's model search.
+func rank(names []string, q string) []string {
+	q = strings.ToLower(q)
+	var tiers [3][]string
+	for _, n := range names {
+		l := strings.ToLower(n)
+		switch {
+		case strings.HasPrefix(l, q):
+			tiers[0] = append(tiers[0], n)
+		case strings.Contains(l, "-"+q):
+			tiers[1] = append(tiers[1], n)
+		case strings.Contains(l, q):
+			tiers[2] = append(tiers[2], n)
+		}
+	}
+	return slices.Concat(tiers[:]...)
+}
+
+// matches are what enter can open while the name row is searched: every role
+// when nothing is typed, else the ranked names, then the typed name to create
+// a role when none has it.
+func (s settings) matches() []string {
+	q := strings.TrimSpace(s.input.Value())
+	if q == "" {
+		return s.draft.roleNames()
+	}
+	out := rank(s.draft.roleNames(), q)
+	if !slices.Contains(out, q) {
+		out = append(out, q)
+	}
+	return out
 }
 
 // choices are the values ←/→ cycle through; a role's effort follows its agent.
 func (f field) choices(d values) []string {
+	if f.key == "name" {
+		return d.roleNames()
+	}
 	if f.role != "" && f.key == "effort" && efforts[d.roleAgent(f.role)] != nil {
 		return append([]string{""}, efforts[d.roleAgent(f.role)]...)
 	}
@@ -182,10 +216,10 @@ func (f field) choices(d values) []string {
 // check reuses Config.Validate on a config holding only this value, and
 // Role.Set for a role's.
 func (f field) check(v string) error {
+	if f.set == nil {
+		return nil
+	}
 	if f.role != "" {
-		if f.set == nil {
-			return nil
-		}
 		r := app.Role{Name: f.role}
 		return r.Set(f.key, v)
 	}
@@ -196,6 +230,8 @@ func (f field) check(v string) error {
 
 func (f field) title() string {
 	switch {
+	case f.key == "name":
+		return "角色"
 	case f.role != "":
 		return "角色 " + f.role + " · " + f.key
 	case f.agent != "":
@@ -205,6 +241,9 @@ func (f field) title() string {
 }
 
 func (f field) help(d values) string {
+	if f.key == "name" {
+		return "enter 后输入名称检索角色（前缀优先，再按 - 分隔的词，再到包含），↑↓ 选择，enter 打开；输入还没有的名称再 enter 新建全局角色。←→ 依次切换。下面只显示当前角色，各角色的改动都会保留，ctrl+s 一起保存。"
+	}
 	if f.role != "" {
 		agent := d.roleAgent(f.role)
 		switch f.key {
@@ -259,9 +298,31 @@ func (s *settings) load() {
 	s.resolve()
 }
 
-// refields rebuilds the role fields after roles were added, dropped or reread.
+// refields shows the selected role, or the first when it is gone, after a
+// role was picked, added, dropped or reread.
 func (s *settings) refields() {
-	s.fields = append(slices.Clone(configFields), roleFields(s.draft, filepath.Join(filepath.Dir(s.path), "agents"))...)
+	names := s.draft.roleNames()
+	if !slices.Contains(names, s.role) {
+		s.role = ""
+		if len(names) > 0 {
+			s.role = names[0]
+		}
+	}
+	role := s.role
+	s.fields = append(slices.Clone(configFields), field{key: "name", role: role, group: "角色", get: func(values) string { return role }})
+	if role != "" {
+		s.fields = append(s.fields, roleFields(s.draft, role)...)
+	}
+	s.cursor = min(s.cursor, len(s.fields)-1)
+}
+
+// all is every field, the roles not shown included, for saving and counting changes.
+func (s settings) all() []field {
+	fs := slices.Clone(configFields)
+	for _, name := range s.draft.roleNames() {
+		fs = append(fs, roleFields(s.draft, name)...)
+	}
+	return fs
 }
 
 // fieldAt is the index of a role's field, or -1.
@@ -280,6 +341,7 @@ func (s *settings) reloadRole(name string) {
 			s.saved.Roles[name], s.draft.Roles[name] = r, r
 		}
 	}
+	s.role = name
 	s.refields()
 	s.cursor = max(0, s.fieldAt(name, "file"))
 }
@@ -306,7 +368,7 @@ func (s *settings) resolve() {
 // A new role's file counts, so an unsaved role is never dropped silently.
 func (s settings) pending() map[string][][2]string {
 	out := map[string][][2]string{}
-	for _, f := range s.fields {
+	for _, f := range s.all() {
 		if v := f.get(s.draft); v != f.get(s.saved) {
 			out[f.role] = append(out[f.role], [2]string{f.key, v})
 		}
@@ -355,6 +417,7 @@ func (m *model) addRole(name string) error {
 		s.draft.Roles = map[string]app.Role{}
 	}
 	s.draft.Roles[name] = app.Role{Name: name, Path: filepath.Join(filepath.Dir(s.path), "agents", name+".md")}
+	s.role = name
 	s.refields()
 	s.cursor = s.fieldAt(name, "description")
 	m.flash("填好 description 后 ctrl+s 保存；在 file 一项按 d 放弃")
@@ -383,26 +446,21 @@ func (m model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key == "ctrl+c" {
 		return m, tea.Quit
 	}
+	if s.editing && s.fields[s.cursor].key == "name" {
+		return m.searchKey(msg)
+	}
 	if s.editing {
 		f := s.fields[s.cursor]
 		switch key {
 		case "enter":
-			v := strings.TrimSpace(s.input.Value())
-			if s.naming {
-				if err := m.addRole(v); err != nil {
-					m.flash("✗ " + err.Error())
-					return m, nil
-				}
-			} else {
-				f.set(&s.draft, v)
-			}
-			s.editing, s.naming = false, false
+			f.set(&s.draft, strings.TrimSpace(s.input.Value()))
+			s.editing = false
 			if f.key == "path" {
 				s.resolve()
 			}
 			m.previewTheme()
 		case "esc":
-			s.editing, s.naming = false, false
+			s.editing = false
 		default:
 			var cmd tea.Cmd
 			s.input, cmd = s.input.Update(msg)
@@ -430,7 +488,7 @@ func (m model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveField(1)
 	case "left", "h", "right", "l":
 		options := f.choices(s.draft)
-		if f.set == nil {
+		if f.key == "file" {
 			m.flash("这一项按 enter 用编辑器打开")
 			break
 		}
@@ -443,21 +501,32 @@ func (m model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if key == "left" || key == "h" {
 			step = len(options) - 1
 		}
+		if f.key == "name" {
+			s.role = options[(i+step)%len(options)]
+			s.refields()
+			break
+		}
 		f.set(&s.draft, options[(i+step)%len(options)])
-	case "enter", "n":
-		if key == "enter" && f.set == nil {
+	case "enter":
+		if f.key == "file" {
 			return m, m.editRole(f.role)
 		}
-		s.editing, s.naming = true, key == "n"
+		s.editing = true
 		s.input = textinput.New()
 		s.input.Prompt = ""
 		s.input.Cursor.SetMode(cursor.CursorStatic)
-		if !s.naming {
+		if f.key == "name" {
+			// The search starts empty, listing every role from the shown one.
+			s.input.Placeholder, s.pick = s.role, max(0, indexOf(s.draft.roleNames(), s.role))
+		} else {
 			s.input.SetValue(f.get(s.draft))
 		}
 		s.input.CursorEnd()
 		s.input.Focus()
 	case "d", "u":
+		if f.key == "name" {
+			break
+		}
 		if f.set == nil {
 			// Only a new role's file differs; dropping it drops the role.
 			if _, saved := s.saved.Roles[f.role]; !saved {
@@ -512,6 +581,40 @@ func (m model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // previewTheme repaints the panel when the theme value changes, saved or not.
+// searchKey handles keys while the name row is searched.
+func (m model) searchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	s := &m.set
+	matches := s.matches()
+	switch msg.String() {
+	case "up", "down":
+		if n := len(matches); n > 0 {
+			s.pick = (s.pick + map[string]int{"up": n - 1, "down": 1}[msg.String()]) % n
+		}
+	case "enter":
+		if len(matches) > 0 {
+			name := matches[min(s.pick, len(matches)-1)]
+			if _, ok := s.draft.Roles[name]; ok {
+				s.role = name
+				s.refields()
+			} else if err := m.addRole(name); err != nil {
+				m.flash("✗ " + err.Error())
+				return m, nil
+			}
+		}
+		s.editing = false
+	case "esc":
+		s.editing = false
+	default:
+		var cmd tea.Cmd
+		s.input, cmd = s.input.Update(msg)
+		s.pick = 0
+		m.syncViewport()
+		return m, cmd
+	}
+	m.syncViewport()
+	return m, nil
+}
+
 func (m *model) previewTheme() {
 	if v := m.set.draft.Theme; v != m.set.shownTheme && (app.Config{Theme: v}).Validate() == nil {
 		m.set.shownTheme = v
@@ -535,8 +638,13 @@ func (m *model) save() {
 		m.flash("没有改动")
 		return
 	}
-	for i, f := range s.fields {
+	for i, f := range s.all() {
 		if f.check(f.get(s.draft)) != nil {
+			if f.role != "" {
+				s.role = f.role
+				s.refields()
+				i = s.fieldAt(f.role, f.key)
+			}
 			s.cursor = i
 			m.flash("✗ 这一项有误，改正后再保存")
 			return
@@ -603,7 +711,7 @@ func (m model) settingsLines(w int) ([]string, []int, int) {
 		}
 		v := f.get(s.draft)
 		val := m.fieldValue(f, v)
-		if i == s.cursor && s.editing && !s.naming {
+		if i == s.cursor && s.editing {
 			in := s.input
 			in.Width = max(1, w-16)
 			val = in.View()
@@ -631,8 +739,38 @@ func (m model) settingsLines(w int) ([]string, []int, int) {
 		if note != "" {
 			lines, owners = append(lines, paint(stripe+strings.Repeat(" ", 12)+p.text(color).Render(fit(note, max(1, w-14))), style, w)), append(owners, i)
 		}
+		if i == s.cursor && s.editing && f.key == "name" {
+			for _, l := range m.matchLines(max(1, w-14)) {
+				lines, owners = append(lines, paint(stripe+strings.Repeat(" ", 12)+l, style, w)), append(owners, i)
+			}
+			selected = len(lines) - 1 // keep the matches in view
+		}
 	}
 	return lines, owners, selected
+}
+
+// matchLines are the search's matches around the highlighted one, with each
+// role's description or a note that enter creates it.
+func (m model) matchLines(w int) []string {
+	p, s := m.palette, m.set
+	matches := s.matches()
+	if len(matches) == 0 {
+		return []string{p.text(p.faint).Render(fit("还没有角色，输入名称新建", w))}
+	}
+	var out []string
+	start := max(0, min(s.pick-3, len(matches)-8))
+	for i := start; i < min(len(matches), start+8); i++ {
+		lead, style := "  ", p.text(p.ink)
+		if i == s.pick {
+			lead, style = "> ", p.text(p.accent).Bold(true)
+		}
+		note := "新建全局角色"
+		if r, ok := s.draft.Roles[matches[i]]; ok {
+			note = cmp.Or(r.Description, "未填写 description")
+		}
+		out = append(out, fitANSI(style.Render(lead+clean(matches[i]))+p.text(p.faint).Render("  "+clean(note)), w))
+	}
+	return out
 }
 
 func (m model) fieldValue(f field, v string) string {
@@ -643,7 +781,7 @@ func (m model) fieldValue(f field, v string) string {
 		}
 		return p.text(p.faint).Render("默认（暴露给主 Agent）")
 	}
-	if f.role != "" {
+	if f.role != "" || f.key == "name" {
 		return m.roleValue(f, v)
 	}
 	if v != "" {
@@ -672,6 +810,14 @@ func (m model) roleValue(f field, v string) string {
 	_, saved := m.set.saved.Roles[f.role]
 	text := ""
 	switch {
+	case f.key == "name" && f.role == "":
+		text = "还没有角色 · enter 输入名称新建"
+	case f.key == "name":
+		names, where := d.roleNames(), "全局"
+		if filepath.Dir(r.Path) != filepath.Join(filepath.Dir(m.set.path), "agents") {
+			where = "仓库"
+		}
+		return p.text(p.ink).Render(clean(f.role)) + p.text(p.faint).Render(fmt.Sprintf("  %d/%d · %s", indexOf(names, f.role)+1, len(names), where))
 	case f.key == "file" && r.Err != nil:
 		text = "文件有误 · enter 编辑"
 	case f.key == "file" && !saved:
@@ -746,7 +892,7 @@ func (m model) settingsDetail(w int) string {
 	section := func(title, body string) {
 		lines = append(lines, p.text(p.faint).Render(title), body, "")
 	}
-	if options := f.choices(s.draft); options != nil {
+	if options := f.choices(s.draft); options != nil && f.key != "name" {
 		var chips []string
 		for _, o := range options {
 			chip := p.text(p.dim).Background(p.code).Render(" " + cmp.Or(o, "默认") + " ")
@@ -763,6 +909,8 @@ func (m model) settingsDetail(w int) string {
 	}
 	r := s.draft.Roles[f.role]
 	switch {
+	case f.key == "name":
+		section(fmt.Sprintf("全部角色（%d）", len(s.draft.Roles)), m.roleOverview(w))
 	case f.agent != "":
 		section("命令预览（baton do，高亮为配置带来的参数）", m.preview(f.agent, "write", s.draft.Agents[f.agent], w))
 		section("保存后的 config.json", m.configPreview(w))
@@ -778,6 +926,33 @@ func (m model) settingsDetail(w int) string {
 		}
 	}
 	return strings.TrimSuffix(strings.Join(lines, "\n"), "\n")
+}
+
+// roleOverview lists every role with its agent, mode and description,
+// marking unsaved and broken ones.
+func (m model) roleOverview(w int) string {
+	p, s := m.palette, m.set
+	pending := s.pending()
+	var out []string
+	for _, name := range s.draft.roleNames() {
+		r := s.draft.Roles[name]
+		mark, meta := p.text(p.faint).Render("  "), cmp.Or(r.Agent, s.draft.DefaultAgent())+" · "+map[string]string{"": "读写", "read": "只读", "write": "只写"}[r.Mode]+" · "+r.Description
+		switch {
+		case pending[name] != nil:
+			mark = p.text(p.wait).Render("● ")
+		case r.Err != nil:
+			mark, meta = p.text(p.bad).Render("! "), "文件有误"
+		}
+		style := p.text(p.ink)
+		if name == s.role {
+			style = style.Bold(true)
+		}
+		out = append(out, fitANSI(mark+style.Render(clean(name))+p.text(p.faint).Render("  "+clean(meta)), max(1, w-1)))
+	}
+	if len(out) == 0 {
+		return p.text(p.faint).Render("还没有角色")
+	}
+	return strings.Join(out, "\n")
 }
 
 // preview is the agent's real argv for a turn, built by the agent package.
