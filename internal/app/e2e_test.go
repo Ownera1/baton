@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -69,6 +70,7 @@ case "$prompt" in
   *HOLD*) echo "$$" > agent.pid; sleep 60 ;;
   *DELAY*) sleep 1 ;;
   *BASE-READ*) pwd -P > "$READ_PWD" ;;
+  *BUILD*) mkdir -p cmd/tool; printf 'ELF\000' > cmd/tool/tool; printf '#!/bin/sh\n' > run.sh; chmod +x cmd/tool/tool run.sh ;;
   *NESTED-NOENV*) env -u BATON_DEPTH "$BATON_BIN" do child -repo "$SOURCE_REPO" > "$NESTED_OUT" 2>&1 || true ;;
   *NESTED*) "$BATON_BIN" do child -repo "$SOURCE_REPO" > "$NESTED_OUT" 2>&1 || true ;;
 esac
@@ -142,7 +144,7 @@ printf 'raw stderr\n' >&2
 	}
 	firstWT, firstBranch, session := result.Worktree, result.Branch, result.SessionID
 	promptPath := filepath.Join(dir, "reply.txt")
-	if err := os.WriteFile(promptPath, []byte("another turn"), 0600); err != nil {
+	if err := os.WriteFile(promptPath, []byte("another turn BUILD"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cli(&submitted, "reply", submitted.ID, "-msg", "@"+promptPath, "-timeout", "20s")
@@ -152,6 +154,17 @@ printf 'raw stderr\n' >&2
 	}
 	if commits, err := workspace.Git(firstWT, "rev-list", "--count", base+"..HEAD"); err != nil || commits != "2" {
 		t.Fatalf("commits: %s %v", commits, err)
+	}
+	// A compiled program is set aside, a script is committed, the worktree stays clean.
+	moved := filepath.Join(filepath.Dir(task.PatchPath), "artifacts", "cmd", "tool", "tool")
+	if files, err := workspace.Git(firstWT, "ls-files"); err != nil || files != "result.txt\nrun.sh" {
+		t.Fatalf("committed: %q %v", files, err)
+	}
+	if info, err := workspace.Inspect(firstWT); err != nil || info.Dirty || !slices.ContainsFunc(task.Warnings, func(w string) bool { return strings.Contains(w, moved) }) {
+		t.Fatalf("set aside: %+v %v %q", info, err, task.Warnings)
+	}
+	if _, err := os.Stat(moved); err != nil {
+		t.Fatal(err)
 	}
 	if head, err := workspace.Git(repo, "rev-parse", "HEAD"); err != nil || head != base {
 		t.Fatalf("source HEAD changed: %s %v", head, err)
@@ -432,11 +445,12 @@ printf 'raw stderr\n' >&2
 	}
 	b, _ = json.Marshal(out.StructuredContent)
 	var top map[string]any
-	if err := json.Unmarshal(b, &many); err != nil || len(many.Tasks) != 2 || many.Tasks[0].ID != held.ID || json.Unmarshal(b, &top) != nil || len(top) != 1 {
+	var briefs struct{ Tasks []app.Brief }
+	if err := json.Unmarshal(b, &briefs); err != nil || len(briefs.Tasks) != 2 || briefs.Tasks[0].ID != held.ID || briefs.Tasks[1].CheckStatus != "pass" || json.Unmarshal(b, &top) != nil || len(top) != 1 {
 		t.Fatalf("MCP wait ids: %s %v", b, err)
 	}
 	out, err = conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_list", Arguments: map[string]any{"group": "slots"}})
-	if b, _ = json.Marshal(out.StructuredContent); err != nil || out.IsError || json.Unmarshal(b, &grouped) != nil || len(grouped.Tasks) != 3 {
+	if b, _ = json.Marshal(out.StructuredContent); err != nil || out.IsError || json.Unmarshal(b, &briefs) != nil || len(briefs.Tasks) != 3 {
 		t.Fatalf("MCP list group: %s %v", b, err)
 	}
 	// Hidden agents are left out of baton_agents and refused over MCP only.

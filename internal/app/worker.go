@@ -5,6 +5,7 @@ import (
 	"baton/internal/guard"
 	"baton/internal/verify"
 	"baton/internal/workspace"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -223,7 +224,7 @@ func (s *Service) Worker(id string) (retErr error) {
 		turn.Error = fmt.Sprintf("agent stopped: canceled=%v timed_out=%v memory_exceeded=%v error=%s", cr.Canceled, cr.TimedOut, cr.MemoryExceeded, turn.Error)
 	}
 	if t.Mode == "write" {
-		if err := s.capture(&t, req.Number); err != nil {
+		if err := s.capture(&t, dir, req.Number); err != nil {
 			return err
 		}
 	}
@@ -277,8 +278,11 @@ func checkBranch(t *Task) error {
 	return nil
 }
 
-func (s *Service) capture(t *Task, number int) error {
+func (s *Service) capture(t *Task, dir string, number int) error {
 	if err := checkBranch(t); err != nil {
+		return err
+	}
+	if err := setAside(t, dir, number); err != nil {
 		return err
 	}
 	info, err := workspace.Inspect(t.Worktree)
@@ -305,6 +309,48 @@ func (s *Service) capture(t *Task, number int) error {
 	}
 	t.Diffstat, err = workspace.Git(t.Worktree, "diff", "--stat", t.BaseCommit, "HEAD")
 	return err
+}
+
+// setAside moves untracked compiled programs out of the worktree into the
+// task's artifacts directory instead of committing them: go build leaves its
+// binary in the package directory, which a repository may not ignore. The
+// worktree stays clean for the next turn.
+func setAside(t *Task, dir string, number int) error {
+	out, stderr, code := workspace.GitRun(t.Worktree, "ls-files", "--others", "--exclude-standard", "-z")
+	if code != 0 {
+		return fmt.Errorf("git ls-files: %s", stderr)
+	}
+	for _, name := range strings.Split(out, "\x00") {
+		if name == "" || !program(filepath.Join(t.Worktree, name)) {
+			continue
+		}
+		dst := filepath.Join(dir, "artifacts", name)
+		if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
+			return err
+		}
+		if err := os.Rename(filepath.Join(t.Worktree, name), dst); err != nil {
+			return err
+		}
+		t.Warnings = append(t.Warnings, fmt.Sprintf("turn %d: 未提交编译出的程序 %s，已移到 %s", number, name, dst))
+	}
+	return nil
+}
+
+// program reports whether path is an executable binary rather than a script,
+// by git's test for binary content: a NUL byte in the first 8000.
+func program(path string) bool {
+	fi, err := os.Lstat(path)
+	if err != nil || !fi.Mode().IsRegular() || fi.Mode().Perm()&0o111 == 0 {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	b := make([]byte, 8000)
+	n, _ := io.ReadFull(f, b)
+	return bytes.IndexByte(b[:n], 0) >= 0
 }
 
 // slot holds one of n turn slots for the whole turn, so the task stays queued

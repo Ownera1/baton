@@ -45,8 +45,13 @@ func server(version string, svc *app.Service) *mcp.Server {
 
 // waited is one task, as before ids existed, or the tasks asked for by ids.
 type waited struct {
-	*app.Task
-	Tasks []*app.Task `json:"tasks,omitempty"`
+	*app.Brief
+	Tasks []*app.Brief `json:"tasks,omitempty"`
+}
+
+// briefs is the list as baton_list returns it.
+type briefs struct {
+	Tasks []*app.Brief `json:"tasks"`
 }
 
 type taskID struct {
@@ -75,16 +80,19 @@ func register(srv *mcp.Server, svc *app.Service) {
 			out, err := svc.Run(in)
 			return nil, out, err
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "baton_status", OutputSchema: map[string]any{"type": "object"}, Description: "Read task status; a missing running worker is reported as stale."},
-		func(ctx context.Context, req *mcp.CallToolRequest, in taskID) (*mcp.CallToolResult, *app.Task, error) {
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_status", OutputSchema: map[string]any{"type": "object"}, Description: "Read a task's status, branch, turn count and latest checks; a missing running worker is reported as stale. baton_result has the reply, patch and check output."},
+		func(ctx context.Context, req *mcp.CallToolRequest, in taskID) (*mcp.CallToolResult, *app.Brief, error) {
 			id, err := resolve(svc, in.ID)
 			if err != nil {
 				return nil, nil, err
 			}
 			out, err := svc.Status(id)
-			return nil, out, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, out.Brief(), nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "baton_wait", OutputSchema: map[string]any{"type": "object"}, Description: "Poll until terminal status or timeout. Default 120s, maximum 600s; timeout returns the current status. With ids, wait for several tasks and return them in tasks; any returns as soon as one of them finishes, so you can act on it while the rest run."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_wait", OutputSchema: map[string]any{"type": "object"}, Description: "Poll until terminal status or timeout. Default 120s, maximum 600s; timeout returns the current status, as baton_status shows it. With ids, wait for several tasks and return them in tasks; any returns as soon as one of them finishes, so you can act on it while the rest run."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in struct {
 			ID             string   `json:"id,omitempty" jsonschema:"task id from baton_run, or its unique prefix or suffix; this or ids is required"`
 			IDs            []string `json:"ids,omitempty" jsonschema:"several tasks to wait for instead of id"`
@@ -118,9 +126,13 @@ func register(srv *mcp.Server, svc *app.Service) {
 				return nil, nil, err
 			}
 			if len(in.IDs) == 0 {
-				return nil, &waited{Task: tasks[0]}, nil
+				return nil, &waited{Brief: tasks[0].Brief()}, nil
 			}
-			return nil, &waited{Tasks: tasks}, nil
+			out := &waited{Tasks: make([]*app.Brief, len(tasks))}
+			for i, t := range tasks {
+				out.Tasks[i] = t.Brief()
+			}
+			return nil, out, nil
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "baton_result", OutputSchema: map[string]any{"type": "object"}, Description: "Read final reply, session, usage, cost, patch, branch and independently executed checks."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in taskID) (*mcp.CallToolResult, *app.Result, error) {
@@ -129,7 +141,16 @@ func register(srv *mcp.Server, svc *app.Service) {
 				return nil, nil, err
 			}
 			out, err := svc.Result(id)
-			return nil, out, err
+			if err != nil {
+				return nil, nil, err
+			}
+			// verify is the latest turn's; earlier ones and the role's
+			// instructions only cost the main agent context.
+			out.Instructions = ""
+			for i := range out.Turns {
+				out.Turns[i].Verify = nil
+			}
+			return nil, out, nil
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "baton_reply", Description: "Continue the same agent session and worktree in a detached worker."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in app.ReplyRequest) (*mcp.CallToolResult, *app.Submitted, error) {
@@ -142,20 +163,30 @@ func register(srv *mcp.Server, svc *app.Service) {
 			return nil, out, err
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "baton_cancel", OutputSchema: map[string]any{"type": "object"}, Description: "Request cancellation; the worker stops the agent or check process group and records canceled."},
-		func(ctx context.Context, req *mcp.CallToolRequest, in taskID) (*mcp.CallToolResult, *app.Task, error) {
+		func(ctx context.Context, req *mcp.CallToolRequest, in taskID) (*mcp.CallToolResult, *app.Brief, error) {
 			id, err := resolve(svc, in.ID)
 			if err != nil {
 				return nil, nil, err
 			}
 			out, err := svc.Cancel(id)
-			return nil, out, err
+			if err != nil {
+				return nil, nil, err
+			}
+			return nil, out.Brief(), nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "baton_list", OutputSchema: map[string]any{"type": "object"}, Description: "List persisted tasks, newest first; group limits it to one group of tasks."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_list", OutputSchema: map[string]any{"type": "object"}, Description: "List persisted tasks, newest first, as baton_status shows them; group limits it to one group of tasks."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in struct {
 			Group string `json:"group,omitempty" jsonschema:"only tasks dispatched with this group"`
-		}) (*mcp.CallToolResult, *app.ListResult, error) {
-			out, err := svc.List(in.Group)
-			return nil, out, err
+		}) (*mcp.CallToolResult, *briefs, error) {
+			list, err := svc.List(in.Group)
+			if err != nil {
+				return nil, nil, err
+			}
+			out := &briefs{Tasks: make([]*app.Brief, len(list.Tasks))}
+			for i, t := range list.Tasks {
+				out.Tasks[i] = t.Brief()
+			}
+			return nil, out, nil
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "baton_export", OutputSchema: map[string]any{"type": "object"}, Description: "Write tasks as Markdown (each turn's instruction, final reply and checks) to .baton/history/ in their repository, for agents and people working there to read. Pick tasks by ids, or every task in a group and/or repo; one of them is required. Returns the files written."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in app.ExportRequest) (*mcp.CallToolResult, *app.ExportResult, error) {
