@@ -83,6 +83,47 @@ type Submitted struct {
 type ListResult struct {
 	Tasks []*Task `json:"tasks"`
 }
+
+// Brief is a task without its turns and check records, for MCP tools the main
+// agent polls; baton_result has the rest.
+type Brief struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Agent  string `json:"agent"`
+	Role   string `json:"role,omitempty"`
+	Group  string `json:"group,omitempty"`
+	Mode   string `json:"mode"`
+	Status string `json:"status"`
+	Branch string `json:"branch,omitempty"`
+	Turns  int    `json:"turns"`
+	// CheckStatus is the latest turn's, empty until its checks ran;
+	// CheckNotes counts them.
+	CheckStatus string    `json:"check_status,omitempty"`
+	CheckNotes  string    `json:"check_notes,omitempty"`
+	Error       string    `json:"error,omitempty"` // the latest turn's
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func (t *Task) Brief() *Brief {
+	b := &Brief{ID: t.ID, Title: t.Name(), Agent: t.Agent, Role: t.Role, Group: t.Group, Mode: t.Mode, Status: t.Status,
+		Turns: len(t.Turns), UpdatedAt: t.UpdatedAt}
+	if t.Mode == "write" {
+		b.Branch = t.Branch
+	}
+	if len(t.Turns) > 0 {
+		last := t.Turns[len(t.Turns)-1]
+		b.Error = last.Error
+		// Records older than per-turn checks keep them only in t.Verify.
+		if v := last.Verify; v != nil || t.Verify.Round == last.Number {
+			if v == nil {
+				v = &t.Verify
+			}
+			b.CheckStatus, b.CheckNotes = v.Status, v.Notes
+		}
+	}
+	return b
+}
+
 type Result struct {
 	*Task
 	FinalText string          `json:"final_text"`

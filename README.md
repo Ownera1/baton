@@ -129,7 +129,7 @@ Pi 始终加 `-ne`，禁用用户扩展。Codex resume 没有 `-s`/`-C`，使用
 
 损坏或缺失的任务文件会显示读取错误并继续刷新；列表读取失败时保留上次成功的列表。未写完的 JSONL 行会暂时忽略，下一次刷新再解析。grok read 只开放三个只读工具，避免 plan 模式中的终端工具尝试取消整轮任务；write 的 auto + workspace sandbox 保持原样。
 
-write 要求源仓库干净且已有 HEAD。worker 从记录的 HEAD 创建 `<task>/wt` 和 `baton/<id>` 分支；每轮 Agent 结束后，将改动提交到这条分支，生成相对初始 HEAD 的累计 `patch.diff`。自动提交关闭 Git hooks 和签名，避免后台交互和 hook 的额外动作；Git 作者身份沿用环境或仓库配置。然后逐条运行检查，记录对应 commit、退出码、耗时和日志。没有检查时为 `none`；资源监测不可用、内存超限、检查超时、锁等待超时或工具缺失时为 `unavailable`。检查失败或 unavailable 使任务为 `failed`。
+write 要求源仓库干净且已有 HEAD。worker 从记录的 HEAD 创建 `<task>/wt` 和 `baton/<id>` 分支；每轮 Agent 结束后，将改动提交到这条分支，生成相对初始 HEAD 的累计 `patch.diff`。未被忽略的新文件里，有可执行权限的二进制文件（如 `go build` 留在包目录的程序）不提交，移到 `<task>/artifacts/` 下同样的路径，并在 warnings 里写明；脚本等文本文件照常提交。自动提交关闭 Git hooks 和签名，避免后台交互和 hook 的额外动作；Git 作者身份沿用环境或仓库配置。然后逐条运行检查，记录对应 commit、退出码、耗时和日志。没有检查时为 `none`；资源监测不可用、内存超限、检查超时、锁等待超时或工具缺失时为 `unavailable`。检查失败或 unavailable 使任务为 `failed`。
 
 检查之后再次确认分支和工作区状态；检查造成未提交改动或改变 HEAD 时结果包含“检查修改了工作区”提示，patch 对应检查前的提交。续接使用原 session、worktree 和检查列表；脏 worktree 必须先由用户处理，正在执行或 stale 的任务不能续接。取消通过标记通知 worker，终止当前 Agent 或检查的进程组；Agent 被取消或超时前已产生的改动也会按轮提交，任务仍记录 canceled 或 failed。
 
@@ -150,7 +150,7 @@ bin/baton mcp
 }
 ```
 
-stdio 提供 `baton_agents`、`baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；`base`、`group` 见[接力](#接力)；`baton_list` 可传 `group`；reply 为 `id/msg/timeout`；`baton_wait` 另有 `ids`、`any`；`baton_agents` 可传 `repo`（默认服务启动目录），列出未隐藏的 Agent 和角色及其说明、实际的 Agent、模型和 effort、角色限定的 mode、是否默认，以及可执行文件缺失、角色文件有误等派活会失败的原因；run 的 `agent` 也可写角色名；其余任务工具传 `id`。`id` 必填（`baton_wait` 也可只传 `ids`），可写唯一前缀或后缀；不像 CLI 那样默认最近一个任务，因为它可能属于另一个主 Agent 会话。`baton_export` 须传 `ids`、`group` 或 `repo`。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
+stdio 提供 `baton_agents`、`baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；`base`、`group` 见[接力](#接力)；`baton_list` 可传 `group`；reply 为 `id/msg/timeout`；`baton_wait` 另有 `ids`、`any`；`baton_agents` 可传 `repo`（默认服务启动目录），列出未隐藏的 Agent 和角色及其说明、实际的 Agent、模型和 effort、角色限定的 mode、是否默认，以及可执行文件缺失、角色文件有误等派活会失败的原因；run 的 `agent` 也可写角色名；其余任务工具传 `id`。`id` 必填（`baton_wait` 也可只传 `ids`），可写唯一前缀或后缀；不像 CLI 那样默认最近一个任务，因为它可能属于另一个主 Agent 会话。`baton_export` 须传 `ids`、`group` 或 `repo`。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。`baton_status`、`baton_wait`、`baton_cancel`、`baton_list` 只返回任务摘要：id、标题、Agent 和角色、组、模式、状态、分支、轮数、最新一轮的检查状态（`check_status`、`check_notes`，检查跑完前为空）和错误、更新时间。`baton_result` 与 CLI `result -json` 相同，但不含角色说明和各轮的检查记录，`verify` 即最新一轮的检查。
 
 MCP 服务在连接时带上 instructions，告诉主 Agent 怎么分派：先用 `baton_agents` 挑 Agent 或角色；独立任务用同一个 `group` 并行派出，`baton_wait` 传 `ids` 和 `any` 先到先处理；同一任务派给两个 Agent 择优；写任务结束后用 `base` 派只读评审，问题用 `baton_reply` 退回原任务；用 `base` 接力；子 Agent 合并不了分支，由主 Agent 审核每个分支（`baton_result` 的 patch 和检查，必要时加评审任务）后自己合并通过的 `baton/<id>`；遇到沙箱拒绝不能改派给沙箱更弱的 Agent（pi 的写模式没有沙箱）；子 Agent 之间不直接通信，结果只经主 Agent 或 `base` 传递。例如让 Claude Code「给用户列表加分页，后端和前端分开做，做完评审再合到一起」，它大致会这样调用：
 
@@ -167,7 +167,7 @@ git merge baton/<a1 的 ID> baton/<b2 的 ID>                 → 主 Agent 用�
 → 告诉用户：合并了哪些分支，没合并的是哪个、为什么
 ```
 
-数据默认保存在 `~/.local/share/baton`，可通过 `BATON_HOME` 修改。每个 `tasks/<id>/` 保存原子更新的 `task.json`、原样的 `turn-n.stdout/stderr`、Codex 的 `turn-n.last`、`patch.diff`、`checks/turn-n/` 和 `worker.log`。`request.json` 是启动/续接信箱，`lock` 串行保护同一任务，`worker.pid` 记录启动 PID，`cancel-n` 是取消标记；只有 worker 写 `task.json`。`cache/` 是 codex 写任务共用的 Go 构建缓存：沙箱不让写默认缓存，codex 会在 worktree 里建 `.cache/go-build`（几百 MB），被 Baton 的提交带进分支；现在 Baton 把它设为沙箱里唯一的额外可写目录，并通过 `shell_environment_policy.set.GOCACHE` 指过去（这会替换 codex 配置里的 `writable_roots`）。同一个 BATON_HOME 下的 `check-gate.lock` 跨进程串行运行所有检查，配置了 `max_parallel` 时 `slots/<n>.lock` 限制同时运行的轮数。
+数据默认保存在 `~/.local/share/baton`，可通过 `BATON_HOME` 修改。每个 `tasks/<id>/` 保存原子更新的 `task.json`、原样的 `turn-n.stdout/stderr`、Codex 的 `turn-n.last`、`patch.diff`、`checks/turn-n/`、`artifacts/` 和 `worker.log`。`request.json` 是启动/续接信箱，`lock` 串行保护同一任务，`worker.pid` 记录启动 PID，`cancel-n` 是取消标记；只有 worker 写 `task.json`。`cache/` 是 codex 写任务共用的 Go 构建缓存：沙箱不让写默认缓存，codex 会在 worktree 里建 `.cache/go-build`（几百 MB），被 Baton 的提交带进分支；现在 Baton 把它设为沙箱里唯一的额外可写目录，并通过 `shell_environment_policy.set.GOCACHE` 指过去（这会替换 codex 配置里的 `writable_roots`）。同一个 BATON_HOME 下的 `check-gate.lock` 跨进程串行运行所有检查，配置了 `max_parallel` 时 `slots/<n>.lock` 限制同时运行的轮数。
 
 安全边界：Baton 不 push、不切换用户分支、不传任何 bypass / skip-permissions / always-approve / danger-full-access 参数。子 Agent 不能再派活：worker 给 Agent 和检查设置 `BATON_DEPTH=1`，带着它的 `do`/`ask`/`run`/`reply`（含 MCP）直接报错；codex 启动 MCP 服务时不传父进程环境，所以还会沿父进程往上找 `baton _worker`（每级一次 `ps`），找到同样拒绝；仓库位于 `$BATON_HOME/tasks/` 下（任务 worktree）时也拒绝。worktree 隔离代码改动，Agent 仍沿用自身权限机制。**Pi write 没有沙箱**，结果中也会提示；用户提供的检查通过 `/bin/sh -c` 执行，同样没有安全沙箱。RSS 每秒采样，默认 3072 MB 上限，CPU 并行提示为 2、nice 为 10；这些限制不能约束主动脱离进程组的程序。应对所有实例使用同一 BATON_HOME 才能共享全机检查锁。
 

@@ -94,17 +94,7 @@ func TestTaskToolsRequireID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "request.json"), []byte(`{"task":{"id":"20261013-000000-aaaa1111bbbb2222","status":"succeeded"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	st, ct := mcp.NewInMemoryTransports()
-	session, err := server("1", &app.Service{Home: home}).Connect(ctx, st, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer session.Close()
-	conn, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil).Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
+	conn := connect(ctx, t, home)
 	for tool, args := range map[string]map[string]any{
 		"baton_status": {"id": ""}, "baton_result": {}, "baton_wait": {"timeout_seconds": 1},
 		"baton_cancel": {"id": " "}, "baton_reply": {"msg": "go on"}, "baton_export": {},
@@ -115,5 +105,65 @@ func TestTaskToolsRequireID(t *testing.T) {
 	}
 	if out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_status", Arguments: map[string]any{"id": "bbbb2222"}}); err != nil || out.IsError {
 		t.Fatalf("status by id: %+v %v", out, err)
+	}
+}
+
+func connect(ctx context.Context, t *testing.T, home string) *mcp.ClientSession {
+	st, ct := mcp.NewInMemoryTransports()
+	session, err := server("1", &app.Service{Home: home}).Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { session.Close() })
+	conn, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
+// Tools the main agent polls return briefs; baton_result keeps one copy of
+// the checks.
+func TestBriefs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	home := t.TempDir()
+	id := "20261013-000000-aaaa1111bbbb2222"
+	dir := filepath.Join(home, "tasks", id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	check := `{"round":1,"status":"fail","notes":"0 required checks passed, 1 failed","checks":[{"id":"1","output_tail":"FAIL"}]}`
+	files := map[string]string{
+		"request.json": `{"task":{"id":"` + id + `"},"number":1}`,
+		"task.json": `{"id":"` + id + `","agent":"codex","mode":"write","branch":"baton/` + id + `","status":"failed","instructions":"role body","verify":` + check +
+			`,"turns":[{"number":1,"prompt":"fix it","final_text":"done","error":"boom","verify":` + check + `}]}`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	conn := connect(ctx, t, home)
+	call := func(tool string, args map[string]any) string {
+		t.Helper()
+		out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
+		if err != nil || out.IsError {
+			t.Fatalf("%s: %+v %v", tool, out, err)
+		}
+		b, _ := json.Marshal(out.StructuredContent)
+		return string(b)
+	}
+	brief := `"agent":"codex","branch":"baton/` + id + `","check_notes":"0 required checks passed, 1 failed","check_status":"fail","error":"boom","id":"` + id + `","mode":"write","status":"failed","title":"fix it","turns":1`
+	for tool, args := range map[string]map[string]any{
+		"baton_status": {"id": id}, "baton_wait": {"id": id}, "baton_wait ids": {"ids": []string{id}}, "baton_list": {},
+	} {
+		if got := call(strings.Fields(tool)[0], args); !strings.Contains(got, brief) || strings.Contains(got, "FAIL") || strings.Contains(got, "prompt") {
+			t.Errorf("%s: %s", tool, got)
+		}
+	}
+	if got := call("baton_result", map[string]any{"id": id}); strings.Count(got, "FAIL") != 1 || strings.Contains(got, "role body") || !strings.Contains(got, `"final_text":"done"`) {
+		t.Errorf("baton_result: %s", got)
 	}
 }
