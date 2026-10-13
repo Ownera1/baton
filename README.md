@@ -77,6 +77,12 @@ baton                                     # 打开面板（同 baton tui）
 
 `baton export [任务…]`（默认最近一个；`-all` 导出当前仓库的全部任务，`-repo` 指定其他仓库，`-group` 导出一组）、面板里的 `x`、MCP 的 `baton_export` 把对话写成 Markdown，放在任务所属仓库的 `.baton/history/<日期>-<标题>-<ID 后 8 位>.md`，在这个项目里工作的 Agent 都能读到。每轮包含指令、最终回复（附工具调用数）和检查结果；再次导出会覆盖同一个文件。第一次导出时目录里会生成只含 `*` 的 `.gitignore`，导出文件不会让仓库变脏、影响下次派写任务；想提交这些记录就删掉它。
 
+### 清理任务
+
+`baton clean [任务…]` 删除已结束的任务：每个任务连同它的 worktree、`baton/<id>` 分支和 `tasks/<id>/` 记录一起删，不会只删一部分。不写任务时扫描当前仓库（`-repo` 指定其他仓库，`-all` 扫描全部仓库）的已结束任务。写任务的分支须已合并进仓库当前分支才会删：是它的祖先、`git cherry` 能在当前分支找到它的每个提交（rebase 或 cherry-pick），或者它的 squash 副本能找到（squash 合并，思路来自 [git-delete-merged-branches](https://github.com/hartwork/git-delete-merged-branches)，未复制代码）；`-force` 连未合并的一起删。排队、运行中或 stale 的任务，以及仍有任务以它为 base 的任务都会保留；worktree 有未提交改动或未跟踪文件时 git 拒绝删除，这个任务也保留。命令先列出要删和保留的任务及占用空间，必须在终端里输入 `y` 才执行；没有终端（管道、Agent 的 shell）时只列出不删。
+
+MCP 的 `baton_clean`（`ids`、`repo`、`force`）给主 Agent 用同样的规则清理，但删除前一定由用户确认：Baton 通过 MCP elicitation 让客户端弹出同样的列表，用户勾选“删除以上任务”并接受后才删，拒绝时返回 `declined`。Claude Code（2026-07-28 协议，带着回答重新调用）和 Codex（2025-06-18 协议，调用中途询问）都支持；不支持 elicitation 的客户端会收到错误，任何东西都不删。确认期间任务列表变了会重新询问。
+
 ### 角色
 
 角色是带固定说明的子 Agent，一个 Markdown 文件一个，文件名即角色名（小写字母、数字、`-`、`_`，不能和 Agent 重名）。仓库的 `.baton/agents/<名字>.md` 覆盖配置目录（默认 `~/.config/baton/`）下的 `agents/<名字>.md`。
@@ -150,9 +156,9 @@ bin/baton mcp
 }
 ```
 
-stdio 提供 `baton_agents`、`baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；`base`、`group` 见[接力](#接力)；`baton_list` 可传 `group`；reply 为 `id/msg/timeout`；`baton_wait` 另有 `ids`、`any`；`baton_agents` 可传 `repo`（默认服务启动目录），列出未隐藏的 Agent 和角色及其说明、实际的 Agent、模型和 effort、角色限定的 mode、是否默认，以及可执行文件缺失、角色文件有误等派活会失败的原因；run 的 `agent` 也可写角色名；其余任务工具传 `id`。`id` 必填（`baton_wait` 也可只传 `ids`），可写唯一前缀或后缀；不像 CLI 那样默认最近一个任务，因为它可能属于另一个主 Agent 会话。`baton_export` 须传 `ids`、`group` 或 `repo`。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。`baton_status`、`baton_wait`、`baton_cancel`、`baton_list` 只返回任务摘要：id、标题、Agent 和角色、组、模式、状态、分支、轮数、最新一轮的检查状态（`check_status`、`check_notes`，检查跑完前为空）和错误、更新时间。`baton_result` 与 CLI `result -json` 相同，但不含角色说明和各轮的检查记录，`verify` 即最新一轮的检查。
+stdio 提供 `baton_agents`、`baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`、`baton_export`、`baton_clean`（见[清理任务](#清理任务)）。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；`base`、`group` 见[接力](#接力)；`baton_list` 可传 `group`；reply 为 `id/msg/timeout`；`baton_wait` 另有 `ids`、`any`；`baton_agents` 可传 `repo`（默认服务启动目录），列出未隐藏的 Agent 和角色及其说明、实际的 Agent、模型和 effort、角色限定的 mode、是否默认，以及可执行文件缺失、角色文件有误等派活会失败的原因；run 的 `agent` 也可写角色名；其余任务工具传 `id`。`id` 必填（`baton_wait` 也可只传 `ids`），可写唯一前缀或后缀；不像 CLI 那样默认最近一个任务，因为它可能属于另一个主 Agent 会话。`baton_export` 须传 `ids`、`group` 或 `repo`。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。`baton_status`、`baton_wait`、`baton_cancel`、`baton_list` 只返回任务摘要：id、标题、Agent 和角色、组、模式、状态、分支、轮数、最新一轮的检查状态（`check_status`、`check_notes`，检查跑完前为空）和错误、更新时间。`baton_result` 与 CLI `result -json` 相同，但不含角色说明和各轮的检查记录，`verify` 即最新一轮的检查。
 
-MCP 服务在连接时带上 instructions，告诉主 Agent 怎么分派：先用 `baton_agents` 挑 Agent 或角色；独立任务用同一个 `group` 并行派出，`baton_wait` 传 `ids` 和 `any` 先到先处理；同一任务派给两个 Agent 择优；写任务结束后用 `base` 派只读评审，问题用 `baton_reply` 退回原任务；用 `base` 接力；子 Agent 合并不了分支，由主 Agent 审核每个分支（`baton_result` 的 patch 和检查，必要时加评审任务）后自己合并通过的 `baton/<id>`；遇到沙箱拒绝不能改派给沙箱更弱的 Agent（pi 的写模式没有沙箱）；子 Agent 之间不直接通信，结果只经主 Agent 或 `base` 传递。例如让 Claude Code「给用户列表加分页，后端和前端分开做，做完评审再合到一起」，它大致会这样调用：
+MCP 服务在连接时带上 instructions，告诉主 Agent 怎么分派：先用 `baton_agents` 挑 Agent 或角色；独立任务用同一个 `group` 并行派出，`baton_wait` 传 `ids` 和 `any` 先到先处理；同一任务派给两个 Agent 择优；写任务结束后用 `base` 派只读评审，问题用 `baton_reply` 退回原任务；用 `base` 接力；子 Agent 合并不了分支，由主 Agent 审核每个分支（`baton_result` 的 patch 和检查，必要时加评审任务）后自己合并通过的 `baton/<id>`；遇到沙箱拒绝不能改派给沙箱更弱的 Agent（pi 的写模式没有沙箱）；子 Agent 之间不直接通信，结果只经主 Agent 或 `base` 传递；合并后可以用 `baton_clean` 清理已合并的任务，由用户确认。例如让 Claude Code「给用户列表加分页，后端和前端分开做，做完评审再合到一起」，它大致会这样调用：
 
 ```text
 baton_agents                                              → codex、claude、角色 reviewer（只读）

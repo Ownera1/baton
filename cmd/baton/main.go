@@ -5,6 +5,7 @@ import (
 	"baton/internal/app"
 	"baton/internal/mcpserver"
 	"baton/internal/tui"
+	"bufio"
 	"cmp"
 	"context"
 	"encoding/json"
@@ -16,6 +17,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"golang.org/x/term"
 )
 
 // version is set by the release build: -ldflags "-X main.version=...".
@@ -31,6 +34,8 @@ const usage = `用法：
   baton agents                   列出 Agent 和角色（.baton/agents/、~/.config/baton/agents/ 下的 *.md）
   baton sessions [-repo 路径|-all]  列出仓库里任务的会话记录：运行目录、Agent 自己的会话文件、Baton 存的每轮输出
   baton export [任务…] [-all|-group 名字]  把对话导出为 Markdown，写到仓库的 .baton/history/；-all 导出当前仓库全部任务
+  baton clean [任务…] [-all] [-force]  删除已结束的任务（worktree、分支和记录），在终端里确认后执行；默认当前仓库，
+                                 写任务的分支须已合并，-force 连未合并的一起删
   baton list | tui | mcp | version
   baton config                   终端里打开设置面板；管道或 -json 时打印配置
 
@@ -105,10 +110,8 @@ func text(pos []string, stdin io.Reader, piped bool) (string, error) {
 	return strings.Join(pos, " "), nil
 }
 
-func terminal(f *os.File) bool {
-	st, err := f.Stat()
-	return err == nil && st.Mode()&os.ModeCharDevice != 0
-}
+// terminal is a real TTY; /dev/null is a character device too.
+func terminal(f *os.File) bool { return term.IsTerminal(int(f.Fd())) }
 
 func stdinPiped() bool {
 	st, err := os.Stdin.Stat()
@@ -365,6 +368,47 @@ func run(args []string) error {
 		}
 		for _, f := range out.Files {
 			fmt.Println(f)
+		}
+		return nil
+	case "clean":
+		var req app.CleanRequest
+		repo := fs.String("repo", ".", "git repository")
+		all := fs.Bool("all", false, "every repository")
+		fs.BoolVar(&req.Force, "force", false, "also remove write tasks whose branch is not merged")
+		pos, err := parse(fs, args[1:])
+		if err != nil {
+			return err
+		}
+		if req.IDs = pos; !*all {
+			req.Repo = *repo
+		}
+		plan, err := svc.PlanClean(req)
+		if err != nil {
+			return err
+		}
+		fmt.Print(plan.Text())
+		if plan.Removable() == 0 {
+			return nil
+		}
+		// A person confirms on a terminal; an agent's shell has none and uses
+		// baton_clean, which asks the user through the MCP client.
+		if !terminal(os.Stdin) {
+			return fmt.Errorf("clean asks for confirmation on a terminal; run it in one")
+		}
+		fmt.Print("确认删除？[y/N] ")
+		if answer, _ := bufio.NewReader(os.Stdin).ReadString('\n'); strings.ToLower(strings.TrimSpace(answer)) != "y" {
+			fmt.Println("未删除")
+			return nil
+		}
+		svc.Clean(plan)
+		if *asJSON {
+			return emit(plan)
+		}
+		fmt.Printf("已删除 %d 个任务\n", len(plan.Removed))
+		for _, it := range plan.Tasks {
+			if it.Error != "" {
+				fmt.Printf("  %s 删除失败：%s\n", short(it.ID), it.Error)
+			}
 		}
 		return nil
 	case "sessions":

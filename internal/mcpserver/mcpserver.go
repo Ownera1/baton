@@ -27,7 +27,7 @@ Patterns:
 - Relay: base a write task on a finished one to continue its branch, for example tests after an implementation.
 - Merging is yours, after review: sub-agents cannot merge, their sandboxes block git writes. Review every finished branch yourself, reading the patch and checks from baton_result and adding a reviewer task when it helps; then merge the approved baton/<id> branches into the user's branch with your own git tools, resolving conflicts yourself or replying to the task that caused them.
 
-Sub-agents cannot dispatch tasks and never talk to each other: results reach the next task only through you, in task or reply, or through base. When checks fail, reply with the failure instead of starting over. Never work around a sandbox refusal by moving the task to an agent with a weaker sandbox (pi write has none); tell the user instead. Finish by reporting what you merged, and which branches you left out and why.`
+Sub-agents cannot dispatch tasks and never talk to each other: results reach the next task only through you, in task or reply, or through base. When checks fail, reply with the failure instead of starting over. Never work around a sandbox refusal by moving the task to an agent with a weaker sandbox (pi write has none); tell the user instead. Finish by reporting what you merged, and which branches you left out and why. After merging, baton_clean can remove the merged tasks' worktrees and branches; the user approves the list in a dialog.`
 
 func Serve(version string) error {
 	svc, err := app.New()
@@ -48,6 +48,17 @@ type waited struct {
 	*app.Brief
 	Tasks []*app.Brief `json:"tasks,omitempty"`
 }
+
+// cleaned is baton_clean's plan; Declined means the user did not approve it.
+type cleaned struct {
+	*app.CleanPlan
+	Declined bool `json:"declined,omitempty"`
+}
+
+// approval is the form the user confirms baton_clean's list with.
+var approval = map[string]any{"type": "object", "required": []string{"confirm"}, "properties": map[string]any{
+	"confirm": map[string]any{"type": "boolean", "title": "删除以上任务", "default": false},
+}}
 
 // briefs is the list as baton_list returns it.
 type briefs struct {
@@ -186,6 +197,36 @@ func register(srv *mcp.Server, svc *app.Service) {
 			for i, t := range list.Tasks {
 				out.Tasks[i] = t.Brief()
 			}
+			return nil, out, nil
+		})
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_clean", OutputSchema: map[string]any{"type": "object"}, Description: "Remove finished tasks whole: worktree, baton/<id> branch and record. Pick them by ids, or every finished task of repo (default: the server's directory). A write task goes only when its branch is merged into the repository's current branch, unless force. Queued or running tasks, tasks another task continues from and worktrees with uncommitted changes stay. Nothing is removed until the user approves the list in a dialog from the MCP client; declined returns the plan with nothing removed."},
+		func(ctx context.Context, req *mcp.CallToolRequest, in app.CleanRequest) (*mcp.CallToolResult, *cleaned, error) {
+			if len(in.IDs) == 0 {
+				in.Repo = cmp.Or(in.Repo, ".")
+			}
+			plan, err := svc.PlanClean(in)
+			if err != nil {
+				return nil, nil, err
+			}
+			out := &cleaned{CleanPlan: plan}
+			if plan.Removable() == 0 {
+				return nil, out, nil
+			}
+			// The user, not the main agent, answers this through the client:
+			// newer clients retry the call with the answer, and for older ones
+			// the SDK asks and calls again itself. The state is the list shown,
+			// so a list that changed meanwhile is asked about again.
+			state := strings.Join(plan.RemovableIDs(), ",")
+			answer, ok := req.Params.InputResponses["approve"].(*mcp.ElicitResult)
+			if !ok || req.Params.RequestState != state {
+				return &mcp.CallToolResult{RequestState: state, InputRequests: mcp.InputRequestMap{
+					"approve": &mcp.ElicitParams{Message: "Baton 清理任务\n\n" + plan.Text(), RequestedSchema: approval}}}, nil, nil
+			}
+			if answer.Action != "accept" || answer.Content["confirm"] != true {
+				out.Declined = true
+				return nil, out, nil
+			}
+			svc.Clean(plan)
 			return nil, out, nil
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "baton_export", OutputSchema: map[string]any{"type": "object"}, Description: "Write tasks as Markdown (each turn's instruction, final reply and checks) to .baton/history/ in their repository, for agents and people working there to read. Pick tasks by ids, or every task in a group and/or repo; one of them is required. Returns the files written."},

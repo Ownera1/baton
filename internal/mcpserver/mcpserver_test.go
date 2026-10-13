@@ -94,7 +94,7 @@ func TestTaskToolsRequireID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "request.json"), []byte(`{"task":{"id":"20261013-000000-aaaa1111bbbb2222","status":"succeeded"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	conn := connect(ctx, t, home)
+	conn := connect(ctx, t, home, nil, "")
 	for tool, args := range map[string]map[string]any{
 		"baton_status": {"id": ""}, "baton_result": {}, "baton_wait": {"timeout_seconds": 1},
 		"baton_cancel": {"id": " "}, "baton_reply": {"msg": "go on"}, "baton_export": {},
@@ -108,14 +108,15 @@ func TestTaskToolsRequireID(t *testing.T) {
 	}
 }
 
-func connect(ctx context.Context, t *testing.T, home string) *mcp.ClientSession {
+// connect starts a client on home; version empty is the latest protocol.
+func connect(ctx context.Context, t *testing.T, home string, opts *mcp.ClientOptions, version string) *mcp.ClientSession {
 	st, ct := mcp.NewInMemoryTransports()
 	session, err := server("1", &app.Service{Home: home}).Connect(ctx, st, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { session.Close() })
-	conn, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil).Connect(ctx, ct, nil)
+	conn, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, opts).Connect(ctx, ct, &mcp.ClientSessionOptions{ProtocolVersion: version})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,7 @@ func TestBriefs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	conn := connect(ctx, t, home)
+	conn := connect(ctx, t, home, nil, "")
 	call := func(tool string, args map[string]any) string {
 		t.Helper()
 		out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
@@ -165,5 +166,53 @@ func TestBriefs(t *testing.T) {
 	}
 	if got := call("baton_result", map[string]any{"id": id}); strings.Count(got, "FAIL") != 1 || strings.Contains(got, "role body") || !strings.Contains(got, `"final_text":"done"`) {
 		t.Errorf("baton_result: %s", got)
+	}
+}
+
+// baton_clean removes nothing until the user accepts the list the client
+// shows; a client that cannot ask gets an error.
+func TestCleanNeedsApproval(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	home := t.TempDir()
+	id := "20261013-000000-aaaa1111bbbb2222"
+	dir := filepath.Join(home, "tasks", id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	task := `{"id":"` + id + `","title":"读一读","mode":"read","repo":"/nowhere","status":"succeeded","turns":[{"number":1}]}`
+	if err := os.WriteFile(filepath.Join(dir, "request.json"), []byte(`{"task":`+task+`,"number":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	args := map[string]any{"ids": []string{id}}
+	// Codex asks within the call (2025-06-18); Claude Code answers by
+	// calling again (2026-07-28).
+	for _, version := range []string{"2025-06-18", ""} {
+		if out, err := connect(ctx, t, home, nil, version).CallTool(ctx, &mcp.CallToolParams{Name: "baton_clean", Arguments: args}); err == nil && !out.IsError {
+			t.Fatalf("%s: cleaned without asking: %+v", version, out.StructuredContent)
+		}
+		var asked string
+		answer := func(content map[string]any) *mcp.ClientSession {
+			return connect(ctx, t, home, &mcp.ClientOptions{ElicitationHandler: func(ctx context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+				asked = req.Params.Message
+				return &mcp.ElicitResult{Action: "accept", Content: content}, nil
+			}}, version)
+		}
+		for _, content := range []map[string]any{nil, {"confirm": false}, {"confirm": true}} {
+			out, err := answer(content).CallTool(ctx, &mcp.CallToolParams{Name: "baton_clean", Arguments: args})
+			if err != nil || out.IsError || !strings.Contains(asked, "读一读") {
+				t.Fatalf("%s %v: %+v %v %q", version, content, out, err, asked)
+			}
+			_, statErr := os.Stat(dir)
+			if b, _ := json.Marshal(out.StructuredContent); (content["confirm"] == true) != os.IsNotExist(statErr) || (content["confirm"] == true) == strings.Contains(string(b), `"declined":true`) {
+				t.Fatalf("%s %v: %s, task dir: %v", version, content, b, statErr)
+			}
+		}
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "request.json"), []byte(`{"task":`+task+`,"number":1}`), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
