@@ -6,6 +6,7 @@ import (
 	"baton/internal/verify"
 	"baton/internal/workspace"
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -195,7 +196,7 @@ func (s *Service) Worker(id string) (retErr error) {
 	defer devnull.Close()
 	// A check waits for other tasks' checks as long as the turn may run; ctx
 	// bounds the wait, so a slow check elsewhere never fails this one.
-	limits := guard.Limits{CPUs: guard.DefaultCPUs, Nice: guard.DefaultNice, MemoryMB: guard.DefaultMemoryMB, GateWait: req.Timeout}
+	limits := guard.Limits{CPUs: cmp.Or(req.CPUs, guard.DefaultCPUs), Nice: guard.DefaultNice, MemoryMB: cmp.Or(req.MemoryMB, guard.DefaultMemoryMB), GateWait: req.Timeout}
 	stdin := io.Reader(devnull)
 	if agent.PromptOnStdin(t.Agent) {
 		stdin = strings.NewReader(prefix + req.Prompt)

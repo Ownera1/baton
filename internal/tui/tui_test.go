@@ -698,7 +698,8 @@ func TestSettingsMode(t *testing.T) {
 	}
 	enter, right, ctrlS := tea.KeyMsg{Type: tea.KeyEnter}, tea.KeyMsg{Type: tea.KeyRight}, tea.KeyMsg{Type: tea.KeyCtrlS}
 	write(`{"agents":{"codex":{"model":"gpt-5.5","effort":"high"}}}`)
-	m := press(refresh(newModel(svc, "dark")), key("s"), key("j"), key("j"), key("j"), key("j"), key("j"), right)
+	// Down past agent, timeout, max_parallel, theme, memory_mb, cpus and codex model.
+	m := press(refresh(newModel(svc, "dark")), key("s"), key("j"), key("j"), key("j"), key("j"), key("j"), key("j"), key("j"), right)
 	if !m.settingsMode || m.set.draft.Agents["codex"].Effort != "xhigh" {
 		t.Fatalf("codex effort did not cycle: %+v", m.set.draft)
 	}
@@ -725,7 +726,7 @@ func TestSettingsMode(t *testing.T) {
 	// An invalid path is flagged and blocks saving.
 	m = press(m, key("j"), key("j"), enter)
 	m = press(m, key("bin/codex"), enter, ctrlS)
-	if !strings.Contains(ansi.Strip(m.details()), "must be absolute") || !strings.Contains(read(), `"high"`) || m.set.cursor != 6 {
+	if !strings.Contains(ansi.Strip(m.details()), "must be absolute") || !strings.Contains(read(), `"high"`) || m.set.cursor != 8 {
 		t.Fatalf("invalid path saved:\n%s\n%s", read(), ansi.Strip(m.details()))
 	}
 	m = press(m, key("d"), ctrlS)
@@ -739,7 +740,7 @@ func TestSettingsMode(t *testing.T) {
 	if !m.set.draft.Agents["codex"].Hidden || !strings.Contains(view, "隐藏（主 Agent 看不到）") || !strings.Contains(view, `+       "hidden": true`) {
 		t.Fatalf("hidden toggle: %+v\n%s", m.set.draft, view)
 	}
-	if m = press(m, key("d"), key("k")); m.set.changed() != 0 || m.set.cursor != 6 {
+	if m = press(m, key("d"), key("k")); m.set.changed() != 0 || m.set.cursor != 8 {
 		t.Fatalf("hidden reset: %+v", m.set.draft)
 	}
 

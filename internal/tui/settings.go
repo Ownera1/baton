@@ -3,6 +3,7 @@ package tui
 import (
 	"baton/internal/agent"
 	"baton/internal/app"
+	"baton/internal/guard"
 	"cmp"
 	"errors"
 	"fmt"
@@ -70,6 +71,21 @@ type field struct {
 	set              func(*values, string) // nil for the role name row and a role's file
 }
 
+// intField edits a whole number; empty is 0, the default.
+func intField(group, key, label string, options []string, n func(*app.Config) *int) field {
+	return field{group: group, key: key, label: label, options: options,
+		get: func(c values) string {
+			return map[bool]string{true: strconv.Itoa(*n(&c.Config))}[*n(&c.Config) != 0]
+		},
+		set: func(c *values, v string) {
+			i, err := strconv.Atoi(v)
+			if err != nil && v != "" {
+				i = -1 // Validate rejects it, so a typo is flagged instead of dropped
+			}
+			*n(&c.Config) = i
+		}}
+}
+
 // Levels listed by each CLI's --help; grok lists none.
 var efforts = map[string][]string{
 	"codex":  {"minimal", "low", "medium", "high", "xhigh"},
@@ -86,19 +102,11 @@ func settingsFields() []field {
 			get: func(c values) string { return c.Agent }, set: func(c *values, v string) { c.Agent = v }},
 		{key: "timeout", options: []string{"", "30m", "1h", "2h", "4h"},
 			get: func(c values) string { return c.Timeout }, set: func(c *values, v string) { c.Timeout = v }},
-		{key: "max_parallel", label: "parallel", options: []string{"", "1", "2", "4", "8"},
-			get: func(c values) string {
-				return map[bool]string{true: strconv.Itoa(c.MaxParallel)}[c.MaxParallel != 0]
-			},
-			set: func(c *values, v string) {
-				n, err := strconv.Atoi(v)
-				if err != nil && v != "" {
-					n = -1 // Validate rejects it, so a typo is flagged instead of dropped
-				}
-				c.MaxParallel = n
-			}},
+		intField("", "max_parallel", "parallel", []string{"", "1", "2", "4", "8"}, func(c *app.Config) *int { return &c.MaxParallel }),
 		{group: "面板", key: "theme", options: []string{"", "light", "dark"},
 			get: func(c values) string { return c.Theme }, set: func(c *values, v string) { c.Theme = v }},
+		intField("资源", "memory_mb", "memory", []string{"", "2048", "4096", "8192", "16384"}, func(c *app.Config) *int { return &c.MemoryMB }),
+		intField("资源", "cpus", "", []string{"", "1", "2", "4", "8"}, func(c *app.Config) *int { return &c.CPUs }),
 	}
 	for _, name := range app.Agents {
 		update := func(c *values, edit func(*app.AgentConfig)) {
@@ -269,6 +277,10 @@ func (f field) help(d values) string {
 		return "同一个 BATON_HOME 下最多同时运行几轮任务（Agent 加检查），多出的保持排队，有空位再开始。派活时记下，之后改只影响新派的任务。"
 	case "theme":
 		return "面板配色。默认跟随终端背景；切换时立即预览，ctrl+s 保存后下次打开也用它。命令行 -theme 优先。"
+	case "memory_mb":
+		return "每轮 Agent 和每条检查各自整个进程组的内存上限（MB），超过就停掉它，这一轮记为失败。大仓库的构建或测试常被停掉时调高。派活时记下，之后改只影响新派的任务。"
+	case "cpus":
+		return "每轮 Agent 和每条检查可用的 CPU 数：设置 GOMAXPROCS、GOFLAGS=-p、MAKEFLAGS=-j、CARGO_BUILD_JOBS 等，并降低调度优先级。不是硬限制。派活时记下。"
 	case "model":
 		return fmt.Sprintf("传给 %s 的模型名，原样传入，不校验。命令行 -model 优先；留空时用 %s 自己的配置。", f.agent, f.agent)
 	case "hidden":
@@ -795,6 +807,10 @@ func (m model) fieldValue(f field, v string) string {
 		text = "默认（" + shortDuration(app.DefaultTimeout) + "）"
 	case "max_parallel":
 		text = "默认（不限）"
+	case "memory_mb":
+		text = fmt.Sprintf("默认（%d）", guard.DefaultMemoryMB)
+	case "cpus":
+		text = fmt.Sprintf("默认（%d）", guard.DefaultCPUs)
 	case "theme":
 		text = "默认（跟随终端，当前" + map[bool]string{true: "深色", false: "浅色"}[m.darkTerminal] + "）"
 	case "path":

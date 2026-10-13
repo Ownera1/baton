@@ -42,7 +42,7 @@ func TestEndToEnd(t *testing.T) {
 	t.Setenv("BATON_HOME", home)
 	t.Setenv("BATON_AGENT", "")
 	t.Setenv("BATON_CONFIG_DIR", dir)
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"agents":{"codex":{"model":"cfg-model"}}}`), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(`{"cpus":3,"memory_mb":4096,"agents":{"codex":{"model":"cfg-model"}}}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
@@ -119,7 +119,7 @@ printf 'raw stderr\n' >&2
 	}
 	var task app.Task
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
-	if len(task.Turns) != 1 || task.Title != "创建结果文件" || task.Turns[0].Verify == nil || task.Turns[0].Verify.Status != "pass" || task.Status != "succeeded" || task.Verify.Status != "pass" || task.Verify.Checks[0].ExitCode != 0 {
+	if len(task.Turns) != 1 || task.Title != "创建结果文件" || task.Turns[0].Verify == nil || task.Turns[0].Verify.Status != "pass" || task.Status != "succeeded" || task.Verify.Status != "pass" || task.Verify.Checks[0].ExitCode != 0 || task.Verify.Checks[0].CPUQuota != 3 {
 		t.Fatalf("task: %+v", task)
 	}
 	var result app.Result

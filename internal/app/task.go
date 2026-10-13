@@ -138,8 +138,10 @@ type request struct {
 	Prompt  string        `json:"prompt"`
 	Number  int           `json:"number"`
 	Timeout time.Duration `json:"timeout"`
-	// Parallel is max_parallel when the turn was dispatched.
+	// Parallel, MemoryMB and CPUs are the config when the turn was dispatched.
 	Parallel int `json:"parallel,omitempty"`
+	MemoryMB int `json:"memory_mb,omitempty"`
+	CPUs     int `json:"cpus,omitempty"`
 }
 
 // Who names the role and its agent, or just the agent.
