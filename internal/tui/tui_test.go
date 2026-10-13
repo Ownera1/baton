@@ -180,6 +180,35 @@ func TestSelectionRefreshAndCancel(t *testing.T) {
 	}
 }
 
+func TestDeleteTask(t *testing.T) {
+	svc, task, dir := fixtureTask(t)
+	m := refresh(newModel(svc))
+	m, cmd := update(m, key("d"))
+	m, _ = update(m, cmd())
+	if m.cleanPlan != nil || !strings.Contains(m.View(), "保留") {
+		t.Fatal("a running task must be kept:", m.View())
+	}
+	task.Status = "succeeded"
+	writeTask(t, dir, task)
+	m = refresh(m)
+	m, cmd = update(m, key("d"))
+	m, _ = update(m, cmd())
+	if !strings.Contains(m.View(), "y 确认") {
+		t.Fatal(m.View())
+	}
+	m, cmd = update(m, key("n"))
+	if _, err := os.Stat(dir); cmd != nil || m.cleanPlan != nil || err != nil {
+		t.Fatal("dismissal must not delete:", err)
+	}
+	m, cmd = update(m, key("d"))
+	m, _ = update(m, cmd())
+	m, cmd = update(m, key("y"))
+	m, _ = update(m, cmd())
+	if _, err := os.Stat(dir); !os.IsNotExist(err) || !strings.Contains(m.View(), "已删除") {
+		t.Fatal("confirmed delete did not remove the task:", err)
+	}
+}
+
 func TestRefreshFileErrorsAndRecovery(t *testing.T) {
 	for _, file := range []string{"request.json", "task.json"} {
 		t.Run(file, func(t *testing.T) {

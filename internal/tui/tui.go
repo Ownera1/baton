@@ -57,6 +57,7 @@ type model struct {
 	frame         int
 	cancelID      string
 	cancelTitle   string
+	cleanPlan     *app.CleanPlan // the selected task's, awaiting y
 	notice        string
 	noticeUntil   time.Time
 	settingsMode  bool
@@ -97,6 +98,11 @@ type cancelMsg struct {
 	id  string
 	err error
 }
+type planMsg struct {
+	plan *app.CleanPlan
+	err  error
+}
+type cleanMsg struct{ plan *app.CleanPlan }
 type exportMsg struct {
 	out *app.ExportResult
 	err error
@@ -276,6 +282,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.noticeUntil = m.now.Add(3 * time.Second)
 		m.syncViewport()
 		return m, m.refresh()
+	case planMsg:
+		switch {
+		case msg.err != nil:
+			m.notice = "无法删除: " + msg.err.Error()
+		case len(msg.plan.Tasks) == 0:
+		case msg.plan.Tasks[0].Keep != "":
+			m.notice = "保留 · " + msg.plan.Tasks[0].Keep
+		default:
+			m.cleanPlan = msg.plan
+		}
+		m.noticeUntil = m.now.Add(5 * time.Second)
+	case cleanMsg:
+		it := msg.plan.Tasks[0]
+		m.notice = "已删除 · " + app.ShortID(it.ID)
+		if it.Error != "" {
+			m.notice = "删除失败: " + it.Error
+		}
+		m.noticeUntil = m.now.Add(5 * time.Second)
+		return m, m.refresh()
 	case editedMsg:
 		m.set.reloadRole(msg.name)
 		m.flash("已重新读取角色 " + msg.name)
@@ -328,10 +353,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyMsg:
 		key := msg.String()
-		if m.cancelID != "" {
-			id := m.cancelID
-			m.cancelID, m.cancelTitle = "", ""
-			if key == "y" {
+		if m.cancelID != "" || m.cleanPlan != nil {
+			id, plan := m.cancelID, m.cleanPlan
+			m.cancelID, m.cancelTitle, m.cleanPlan = "", "", nil
+			switch {
+			case key != "y":
+			case plan != nil:
+				return m, func() tea.Msg {
+					m.svc.Clean(plan)
+					return cleanMsg{plan}
+				}
+			default:
 				return m, func() tea.Msg {
 					_, err := m.svc.Cancel(id)
 					return cancelMsg{id: id, err: err}
@@ -373,6 +405,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			if t := m.task(); t != nil && (t.Status == "queued" || t.Status == "running" || t.Status == "stale") {
 				m.cancelID, m.cancelTitle = t.ID, taskTitle(t)
+			}
+		case "d":
+			// Same rules as baton clean without -force; asks before removing.
+			if t := m.task(); t != nil {
+				id := t.ID
+				return m, func() tea.Msg {
+					plan, err := m.svc.PlanClean(app.CleanRequest{IDs: []string{id}})
+					return planMsg{plan, err}
+				}
 			}
 		case "x":
 			if t := m.task(); t != nil {
