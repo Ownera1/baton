@@ -582,10 +582,18 @@ func (m model) footer() string {
 	if m.cancelID != "" {
 		return p.text(p.bad).Background(p.badBG).Width(m.width).Render(fit("取消「"+m.cancelTitle+"」？ y 确认  esc 返回", m.width))
 	}
+	if m.cleanPlan != nil {
+		it := m.cleanPlan.Tasks[0]
+		what := "记录"
+		if it.Mode == "write" {
+			what = "worktree、分支 " + it.Branch + " 和记录"
+		}
+		return p.text(p.bad).Background(p.badBG).Width(m.width).Render(fit(fmt.Sprintf("删除「%s」及其%s（%.1f MB）？ y 确认  esc 返回", it.Title, what, float64(it.Bytes)/1e6), m.width))
+	}
 	if m.settingsMode && m.set.quit {
 		return p.text(p.bad).Background(p.badBG).Width(m.width).Render(fit(fmt.Sprintf("设置有 %d 项未保存，再按 q 放弃并退出，其他键返回", m.set.changed()), m.width))
 	}
-	pairs := [][2]string{{"↑↓", "选择"}, {"tab/点击", "切焦点"}, {"1-4", "标签"}, {"[ ]", "比例"}, {"z", "专注"}, {"e", "展开"}, {"c", "取消"}, {"x", "导出"}, {"s", "设置"}, {"q", "退出"}}
+	pairs := [][2]string{{"↑↓", "选择"}, {"tab/点击", "切焦点"}, {"1-4", "标签"}, {"[ ]", "比例"}, {"z", "专注"}, {"e", "展开"}, {"c", "取消"}, {"d", "删除"}, {"x", "导出"}, {"s", "设置"}, {"q", "退出"}}
 	right := fmt.Sprintf("列表 %d%% · 详情 %d%%", m.ratio, 100-m.ratio)
 	if m.settingsMode {
 		pairs = [][2]string{{"↑↓", "选择"}, {"←→", "切换"}, {"enter", "输入"}, {"d", "默认"}, {"u", "撤销"}, {"ctrl+s", "保存"}, {"esc", "返回"}}
