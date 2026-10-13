@@ -155,6 +155,9 @@ func (s *Service) submit(dir string, req request) (*Submitted, error) {
 		return nil, previousErr
 	}
 	if err := writeJSON(filepath.Join(dir, "request.json"), req); err != nil {
+		if previousErr != nil {
+			_ = os.RemoveAll(dir) // a new task that never got its request
+		}
 		return nil, err
 	}
 	if err := s.spawnDetached(req.Task.ID, dir); err != nil {
@@ -356,21 +359,15 @@ func (s *Service) Cancel(id string) (*Task, error) {
 
 // List returns every task, or only those in group, newest first.
 func (s *Service) List(group string) (*ListResult, error) {
-	r := &ListResult{Tasks: []*Task{}}
-	entries, err := os.ReadDir(filepath.Join(s.Home, "tasks"))
-	if errors.Is(err, os.ErrNotExist) {
-		return r, nil
-	}
+	ids, err := s.ids()
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		t, err := s.Status(e.Name())
+	r := &ListResult{Tasks: []*Task{}}
+	for _, id := range ids {
+		t, err := s.Status(id)
 		if err != nil {
-			return nil, fmt.Errorf("task %s: %w", e.Name(), err)
+			return nil, fmt.Errorf("task %s: %w", id, err)
 		}
 		if group == "" || t.Group == group {
 			r.Tasks = append(r.Tasks, t)
@@ -378,4 +375,25 @@ func (s *Service) List(group string) (*ListResult, error) {
 	}
 	sort.Slice(r.Tasks, func(i, j int) bool { return r.Tasks[i].CreatedAt.After(r.Tasks[j].CreatedAt) })
 	return r, nil
+}
+
+// ids are the task directories holding a request.json, oldest first (ids
+// start with a UTC timestamp). A directory still being created, or left by a
+// dispatch that failed, has none and is skipped instead of failing every list.
+func (s *Service) ids() ([]string, error) {
+	tasks := filepath.Join(s.Home, "tasks")
+	entries, err := os.ReadDir(tasks)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, e := range entries {
+		if _, err := os.Stat(filepath.Join(tasks, e.Name(), "request.json")); e.IsDir() && err == nil {
+			ids = append(ids, e.Name())
+		}
+	}
+	return ids, nil
 }

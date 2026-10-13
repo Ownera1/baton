@@ -5,7 +5,9 @@ import (
 	"baton/internal/app"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -48,7 +50,15 @@ type waited struct {
 }
 
 type taskID struct {
-	ID string `json:"id,omitempty" jsonschema:"task id, unique prefix or suffix; empty means the newest task"`
+	ID string `json:"id" jsonschema:"task id from baton_run, or its unique prefix or suffix"`
+}
+
+// resolve requires an id: the newest task may belong to another session.
+func resolve(svc *app.Service, ref string) (string, error) {
+	if strings.TrimSpace(ref) == "" {
+		return "", errors.New("id is required: pass the id baton_run returned")
+	}
+	return svc.Resolve(ref)
 }
 
 func register(srv *mcp.Server, svc *app.Service) {
@@ -67,7 +77,7 @@ func register(srv *mcp.Server, svc *app.Service) {
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "baton_status", OutputSchema: map[string]any{"type": "object"}, Description: "Read task status; a missing running worker is reported as stale."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in taskID) (*mcp.CallToolResult, *app.Task, error) {
-			id, err := svc.Resolve(in.ID)
+			id, err := resolve(svc, in.ID)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -76,7 +86,7 @@ func register(srv *mcp.Server, svc *app.Service) {
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "baton_wait", OutputSchema: map[string]any{"type": "object"}, Description: "Poll until terminal status or timeout. Default 120s, maximum 600s; timeout returns the current status. With ids, wait for several tasks and return them in tasks; any returns as soon as one of them finishes, so you can act on it while the rest run."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in struct {
-			ID             string   `json:"id,omitempty" jsonschema:"task id, unique prefix or suffix; empty means the newest task"`
+			ID             string   `json:"id,omitempty" jsonschema:"task id from baton_run, or its unique prefix or suffix; this or ids is required"`
 			IDs            []string `json:"ids,omitempty" jsonschema:"several tasks to wait for instead of id"`
 			Any            bool     `json:"any,omitempty" jsonschema:"with ids, return when the first task finishes"`
 			TimeoutSeconds int      `json:"timeout_seconds,omitempty"`
@@ -94,7 +104,7 @@ func register(srv *mcp.Server, svc *app.Service) {
 			}
 			ids := make([]string, len(refs))
 			for i, ref := range refs {
-				id, err := svc.Resolve(ref)
+				id, err := resolve(svc, ref)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -114,7 +124,7 @@ func register(srv *mcp.Server, svc *app.Service) {
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "baton_result", OutputSchema: map[string]any{"type": "object"}, Description: "Read final reply, session, usage, cost, patch, branch and independently executed checks."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in taskID) (*mcp.CallToolResult, *app.Result, error) {
-			id, err := svc.Resolve(in.ID)
+			id, err := resolve(svc, in.ID)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -123,7 +133,7 @@ func register(srv *mcp.Server, svc *app.Service) {
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "baton_reply", Description: "Continue the same agent session and worktree in a detached worker."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in app.ReplyRequest) (*mcp.CallToolResult, *app.Submitted, error) {
-			id, err := svc.Resolve(in.ID)
+			id, err := resolve(svc, in.ID)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -133,7 +143,7 @@ func register(srv *mcp.Server, svc *app.Service) {
 		})
 	mcp.AddTool(srv, &mcp.Tool{Name: "baton_cancel", OutputSchema: map[string]any{"type": "object"}, Description: "Request cancellation; the worker stops the agent or check process group and records canceled."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in taskID) (*mcp.CallToolResult, *app.Task, error) {
-			id, err := svc.Resolve(in.ID)
+			id, err := resolve(svc, in.ID)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -147,8 +157,11 @@ func register(srv *mcp.Server, svc *app.Service) {
 			out, err := svc.List(in.Group)
 			return nil, out, err
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "baton_export", OutputSchema: map[string]any{"type": "object"}, Description: "Write tasks as Markdown (each turn's instruction, final reply and checks) to .baton/history/ in their repository, for agents and people working there to read. Pick tasks by ids, or every task in a group and/or repo; nothing exports the newest task. Returns the files written."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_export", OutputSchema: map[string]any{"type": "object"}, Description: "Write tasks as Markdown (each turn's instruction, final reply and checks) to .baton/history/ in their repository, for agents and people working there to read. Pick tasks by ids, or every task in a group and/or repo; one of them is required. Returns the files written."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in app.ExportRequest) (*mcp.CallToolResult, *app.ExportResult, error) {
+			if len(in.IDs) == 0 && in.Group == "" && in.Repo == "" {
+				return nil, nil, errors.New("pass ids, group or repo")
+			}
 			out, err := svc.Export(in)
 			return nil, out, err
 		})

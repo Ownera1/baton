@@ -20,7 +20,7 @@ func claudeArgv(o Options) []string {
 	if o.SessionID != "" {
 		a = append(a, "--resume", o.SessionID)
 	}
-	return append(a, o.Prompt)
+	return a // -p reads the prompt from stdin, see PromptOnStdin
 }
 
 func parseClaude(b []byte) (Result, error) {

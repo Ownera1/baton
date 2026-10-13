@@ -204,9 +204,10 @@ func TestRefreshFileErrorsAndRecovery(t *testing.T) {
 			if err := os.Remove(filepath.Join(dir, "request.json")); err != nil {
 				t.Fatal(err)
 			}
+			// Without request.json the directory is not a task yet; it must not break the list.
 			m = refresh(m)
-			if !strings.Contains(m.View(), "Error:") {
-				t.Fatal("missing file must show an error:", m.View())
+			if m.err != nil || !strings.Contains(m.View(), "暂无对话") {
+				t.Fatal("a directory without request.json must be skipped:", m.View())
 			}
 		})
 	}

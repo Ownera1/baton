@@ -70,7 +70,7 @@ type RunRequest struct {
 }
 
 type ReplyRequest struct {
-	ID      string `json:"id,omitempty" jsonschema:"task id, unique prefix or suffix; empty means the newest task"`
+	ID      string `json:"id" jsonschema:"task id from baton_run, or its unique prefix or suffix"`
 	Message string `json:"msg"`
 	Timeout string `json:"timeout,omitempty"`
 	FromMCP bool   `json:"-"`

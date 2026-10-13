@@ -62,9 +62,10 @@ func TestEndToEnd(t *testing.T) {
 	// Only this fake codex is executed; no provider or real agent is used.
 	script := `#!/bin/sh
 set -eu
-if read -r input; then echo "stdin was not /dev/null" >&2; exit 9; fi
-printf '%s\n' "$PWD" "$@" >> "$ARGV_LOG"
-case "$*" in
+prompt=$(cat)
+test "$prompt" || { echo "no prompt on stdin" >&2; exit 9; }
+printf '%s\n' "$PWD" "$@" "$prompt" >> "$ARGV_LOG"
+case "$prompt" in
   *HOLD*) echo "$$" > agent.pid; sleep 60 ;;
   *DELAY*) sleep 1 ;;
   *BASE-READ*) pwd -P > "$READ_PWD" ;;
@@ -170,6 +171,15 @@ printf 'raw stderr\n' >&2
 	cli(&task, "wait", submitted.ID, "-timeout", "20s")
 	if out, err := os.ReadFile(nestedOut); err != nil || !strings.Contains(string(out), "BATON_DEPTH=1") {
 		t.Fatalf("nested dispatch: %s %v", out, err)
+	}
+	// The prompt goes on stdin: Linux refuses a single argument over 128 KiB.
+	big := filepath.Join(dir, "big.md")
+	if err := os.WriteFile(big, []byte("BIG-PROMPT "+strings.Repeat("x", 200<<10)), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cli(&submitted, "ask", "@"+big, "-repo", repo, "-timeout", "20s")
+	if cli(&task, "wait", submitted.ID, "-timeout", "20s"); task.Status != "succeeded" {
+		t.Fatalf("200 KiB prompt: %+v", task)
 	}
 	// Without the variable, as codex starts MCP servers, the worker ancestor still refuses.
 	cli(&submitted, "ask", "NESTED-NOENV", "-repo", repo, "-timeout", "20s")

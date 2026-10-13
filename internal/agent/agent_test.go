@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -136,8 +137,12 @@ func TestArgvModesAndResume(t *testing.T) {
 	}
 	o.Mode = "read"
 	o.SessionID = ""
-	if got := codexArgv(o); !reflect.DeepEqual(got, []string{"exec", "-s", "read-only", "-C", "/repo path", "-c", `approval_policy="never"`, "--json", "-o", "/turn.last", "-m", "model", "-c", "model_reasoning_effort=\"high\"", "--", "task"}) {
+	if got := codexArgv(o); !reflect.DeepEqual(got, []string{"exec", "-s", "read-only", "-C", "/repo path", "-c", `approval_policy="never"`, "--json", "-o", "/turn.last", "-m", "model", "-c", "model_reasoning_effort=\"high\"", "--", "-"}) {
 		t.Fatal(got)
+	}
+	// codex and claude read the prompt from stdin, so its size is not capped by argv.
+	if got := claudeArgv(o); !PromptOnStdin("codex") || !PromptOnStdin("claude") || slices.Contains(got, "task") {
+		t.Fatalf("prompt on argv: %v", got)
 	}
 	if got, err := Argv("codex", Options{Path: "/bin/sh"}); err != nil || got[0] != "/bin/sh" {
 		t.Fatalf("configured path: %v %v", got, err)

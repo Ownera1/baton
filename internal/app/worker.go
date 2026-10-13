@@ -8,9 +8,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -186,8 +188,14 @@ func (s *Service) Worker(id string) (retErr error) {
 		return err
 	}
 	defer devnull.Close()
-	limits := guard.Limits{CPUs: guard.DefaultCPUs, Nice: guard.DefaultNice, MemoryMB: guard.DefaultMemoryMB, GateWait: guard.DefaultGateWait}
-	cr := workspace.RunArgv(runDir, argv, devnull, os.Environ(), workspace.RunOptions{
+	// A check waits for other tasks' checks as long as the turn may run; ctx
+	// bounds the wait, so a slow check elsewhere never fails this one.
+	limits := guard.Limits{CPUs: guard.DefaultCPUs, Nice: guard.DefaultNice, MemoryMB: guard.DefaultMemoryMB, GateWait: req.Timeout}
+	stdin := io.Reader(devnull)
+	if agent.PromptOnStdin(t.Agent) {
+		stdin = strings.NewReader(prefix + req.Prompt)
+	}
+	cr := workspace.RunArgv(runDir, argv, stdin, os.Environ(), workspace.RunOptions{
 		Context: ctx, Limits: limits, Stdout: out, Stderr: errout, Note: func(msg string) { fmt.Fprintln(os.Stderr, msg) },
 	})
 	turn.ExitCode = cr.ExitCode
