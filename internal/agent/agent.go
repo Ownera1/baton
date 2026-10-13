@@ -37,6 +37,10 @@ func Argv(name string, o Options) ([]string, error) {
 	return append([]string{path}, args...), nil
 }
 
+// PromptOnStdin reports whether the agent reads Options.Prompt from stdin
+// instead of argv, where Linux caps one argument at 128 KiB.
+func PromptOnStdin(name string) bool { return name == "codex" || name == "claude" }
+
 // Args builds the agent's arguments without looking up its executable.
 func Args(name string, o Options) ([]string, error) {
 	var args []string

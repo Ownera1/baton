@@ -4,6 +4,8 @@ import (
 	"baton/internal/app"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -77,4 +79,41 @@ func TestRunTitleSchema(t *testing.T) {
 		return
 	}
 	t.Fatal("baton_run missing")
+}
+
+// Over MCP an empty id must not fall back to the newest task, which may be
+// another session's.
+func TestTaskToolsRequireID(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	home := t.TempDir()
+	dir := filepath.Join(home, "tasks", "20261013-000000-aaaa1111bbbb2222")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "request.json"), []byte(`{"task":{"id":"20261013-000000-aaaa1111bbbb2222","status":"succeeded"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st, ct := mcp.NewInMemoryTransports()
+	session, err := server("1", &app.Service{Home: home}).Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	conn, err := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	for tool, args := range map[string]map[string]any{
+		"baton_status": {"id": ""}, "baton_result": {}, "baton_wait": {"timeout_seconds": 1},
+		"baton_cancel": {"id": " "}, "baton_reply": {"msg": "go on"}, "baton_export": {},
+	} {
+		if out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args}); err == nil && !out.IsError {
+			t.Errorf("%s without id: %+v", tool, out.StructuredContent)
+		}
+	}
+	if out, err := conn.CallTool(ctx, &mcp.CallToolParams{Name: "baton_status", Arguments: map[string]any{"id": "bbbb2222"}}); err != nil || out.IsError {
+		t.Fatalf("status by id: %+v %v", out, err)
+	}
 }

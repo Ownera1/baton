@@ -960,6 +960,9 @@ func (m model) preview(name, mode string, a app.AgentConfig, w int) string {
 	p := m.palette
 	args, _ := agent.Args(name, agent.Options{Mode: mode, Dir: "<worktree>", Prompt: "<任务>", LastFile: "<last>", Model: a.Model, Effort: a.Effort})
 	argv := append([]string{cmp.Or(m.set.exe[name].path, a.Path, name)}, args...)
+	if agent.PromptOnStdin(name) {
+		argv = append(argv, "<", "<任务>")
+	}
 	hot := make([]bool, len(argv))
 	for i, arg := range argv {
 		if (i == 0 && a.Path != "") || (a.Model != "" && arg == a.Model) || (a.Effort != "" && (arg == a.Effort || strings.HasSuffix(arg, "="+strconv.Quote(a.Effort)))) {

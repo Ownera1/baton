@@ -150,7 +150,7 @@ bin/baton mcp
 }
 ```
 
-stdio 提供 `baton_agents`、`baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；`base`、`group` 见[接力](#接力)；`baton_list` 可传 `group`；reply 为 `id/msg/timeout`；`baton_wait` 另有 `ids`、`any`；`baton_agents` 可传 `repo`（默认服务启动目录），列出未隐藏的 Agent 和角色及其说明、实际的 Agent、模型和 effort、角色限定的 mode、是否默认，以及可执行文件缺失、角色文件有误等派活会失败的原因；run 的 `agent` 也可写角色名；其余任务工具传 `id`。`id` 可写唯一前缀或后缀，留空表示最近一个任务。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
+stdio 提供 `baton_agents`、`baton_run`、`baton_status`、`baton_wait`、`baton_result`、`baton_reply`、`baton_cancel`、`baton_list`。参数与 CLI 共用服务：run 只有 `task` 必填，另有 `agent/repo/title/mode/model/effort/checks/no_checks/timeout`，默认值与 CLI 相同（`repo` 取 MCP 服务启动目录）；`base`、`group` 见[接力](#接力)；`baton_list` 可传 `group`；reply 为 `id/msg/timeout`；`baton_wait` 另有 `ids`、`any`；`baton_agents` 可传 `repo`（默认服务启动目录），列出未隐藏的 Agent 和角色及其说明、实际的 Agent、模型和 effort、角色限定的 mode、是否默认，以及可执行文件缺失、角色文件有误等派活会失败的原因；run 的 `agent` 也可写角色名；其余任务工具传 `id`。`id` 必填（`baton_wait` 也可只传 `ids`），可写唯一前缀或后缀；不像 CLI 那样默认最近一个任务，因为它可能属于另一个主 Agent 会话。`baton_export` 须传 `ids`、`group` 或 `repo`。`baton_wait` 用 `timeout_seconds`，默认 120，上限 600；超时返回当前任务。结构化结果与 CLI 的 JSON 相同。
 
 MCP 服务在连接时带上 instructions，告诉主 Agent 怎么分派：先用 `baton_agents` 挑 Agent 或角色；独立任务用同一个 `group` 并行派出，`baton_wait` 传 `ids` 和 `any` 先到先处理；同一任务派给两个 Agent 择优；写任务结束后用 `base` 派只读评审，问题用 `baton_reply` 退回原任务；用 `base` 接力；子 Agent 合并不了分支，由主 Agent 审核每个分支（`baton_result` 的 patch 和检查，必要时加评审任务）后自己合并通过的 `baton/<id>`；遇到沙箱拒绝不能改派给沙箱更弱的 Agent（pi 的写模式没有沙箱）；子 Agent 之间不直接通信，结果只经主 Agent 或 `base` 传递。例如让 Claude Code「给用户列表加分页，后端和前端分开做，做完评审再合到一起」，它大致会这样调用：
 

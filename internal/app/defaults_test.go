@@ -51,6 +51,16 @@ func TestResolve(t *testing.T) {
 		if err := os.MkdirAll(filepath.Join(s.Home, "tasks", id), 0o700); err != nil {
 			t.Fatal(err)
 		}
+		if err := writeJSON(filepath.Join(s.Home, "tasks", id, "request.json"), request{Task: Task{ID: id}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A directory without request.json (being created, or a failed dispatch) is not a task.
+	if err := os.MkdirAll(filepath.Join(s.Home, "tasks", "20261012-000000-ffff6666ffff7777"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := s.List(""); err != nil || len(list.Tasks) != len(ids) {
+		t.Fatalf("list with a half-created task: %+v %v", list, err)
 	}
 	for ref, want := range map[string]string{"": ids[2], ids[0]: ids[0], "bbbb2222": ids[0], "20261011-09": ids[0], "eeee5555": ids[2]} {
 		if got, err := s.Resolve(ref); err != nil || got != want {

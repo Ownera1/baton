@@ -3,12 +3,10 @@ package app
 import (
 	"baton/internal/agent"
 	"cmp"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 )
@@ -55,21 +53,14 @@ func DetectChecks(root string) []string {
 // Resolve accepts a full task id, a unique prefix or suffix (the TUI shows the
 // last 8 characters), or "" for the newest task.
 func (s *Service) Resolve(ref string) (string, error) {
-	entries, err := os.ReadDir(filepath.Join(s.Home, "tasks"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	ids, err := s.ids()
+	if err != nil {
 		return "", err
-	}
-	var ids []string
-	for _, e := range entries {
-		if e.IsDir() {
-			ids = append(ids, e.Name())
-		}
 	}
 	if len(ids) == 0 {
 		return "", fmt.Errorf("no tasks yet")
 	}
 	if ref == "" {
-		sort.Strings(ids) // ids start with a UTC timestamp
 		return ids[len(ids)-1], nil
 	}
 	var matches []string
@@ -87,7 +78,6 @@ func (s *Service) Resolve(ref string) (string, error) {
 	case 1:
 		return matches[0], nil
 	}
-	sort.Strings(matches)
 	if len(matches) > 5 {
 		matches = append(matches[:5], "…")
 	}
