@@ -13,6 +13,8 @@ import (
 type Options struct {
 	Mode, Dir, Prompt, Model, Effort, SessionID, LastFile string
 	Path                                                  string // executable; empty means name looked up in PATH
+	// Cache is a directory a write task may keep build caches in, shared by tasks.
+	Cache string
 }
 
 type Result struct {
