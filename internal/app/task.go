@@ -150,6 +150,22 @@ func (t *Task) Who() string {
 	return t.Agent
 }
 
+var glyphs = map[string]string{"running": "●", "queued": "◌", "succeeded": "✓", "failed": "✗", "canceled": "■", "stale": "!"}
+
+// Glyph marks a status in lists.
+func Glyph(status string) string { return glyphs[status] }
+
+// ModeName is the mode as lists show it.
+func ModeName(mode string) string {
+	if mode == "read" {
+		return "读"
+	}
+	return "写"
+}
+
+// ShortID is the end of an id, unique enough to show and to resolve.
+func ShortID(id string) string { return id[max(0, len(id)-8):] }
+
 // Name is the title, or one inferred from the first prompt.
 func (t *Task) Name() string {
 	if t.Title != "" {

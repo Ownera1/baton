@@ -270,7 +270,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.patches[msg.id] = msg.patch
 	case cancelMsg:
-		m.notice = "已请求取消 · " + shortID(msg.id)
+		m.notice = "已请求取消 · " + app.ShortID(msg.id)
 		if msg.err != nil {
 			m.notice = "取消失败: " + msg.err.Error()
 		}

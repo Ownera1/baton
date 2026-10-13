@@ -316,7 +316,7 @@ func run(args []string) error {
 				parts = append(parts, "角色 → "+a.Agent)
 			}
 			if a.Mode != "" {
-				parts = append(parts, "只"+modes[a.Mode])
+				parts = append(parts, "只"+app.ModeName(a.Mode))
 			}
 			if a.Model != "" || a.Effort != "" {
 				parts = append(parts, cmp.Or(a.Model, "默认模型")+" / "+cmp.Or(a.Effort, "默认 effort"))
@@ -407,7 +407,7 @@ func run(args []string) error {
 		fmt.Printf("已删除 %d 个任务\n", len(plan.Removed))
 		for _, it := range plan.Tasks {
 			if it.Error != "" {
-				fmt.Printf("  %s 删除失败：%s\n", short(it.ID), it.Error)
+				fmt.Printf("  %s 删除失败：%s\n", app.ShortID(it.ID), it.Error)
 			}
 		}
 		return nil
@@ -425,7 +425,7 @@ func run(args []string) error {
 			return orEmit(map[string]any{"sessions": sessions}, err)
 		}
 		for _, s := range sessions {
-			fmt.Printf("%s %s · %s · %s · %s\n  目录 %s\n", short(s.Task), s.Title, s.Agent, modes[s.Mode], filepath.Base(s.Repo), s.Dir)
+			fmt.Printf("%s %s · %s · %s · %s\n  目录 %s\n", app.ShortID(s.Task), s.Title, s.Agent, app.ModeName(s.Mode), filepath.Base(s.Repo), s.Dir)
 			if s.Transcript != "" {
 				fmt.Println("  会话", s.Transcript)
 			}
@@ -456,7 +456,7 @@ func submitted(svc *app.Service, id string, wait, asJSON bool) error {
 		if asJSON {
 			return emit(app.Submitted{ID: id, Status: t.Status})
 		}
-		fmt.Printf("已派出 %s\n查看：baton wait %s · baton tui\n", line(t), short(id))
+		fmt.Printf("已派出 %s\n查看：baton wait %s · baton tui\n", line(t), app.ShortID(id))
 		return nil
 	}
 	if !asJSON {
@@ -475,19 +475,9 @@ func submitted(svc *app.Service, id string, wait, asJSON bool) error {
 		printResult(r)
 	}
 	if err == nil && r.Status != "succeeded" {
-		err = fmt.Errorf("task %s %s", short(id), r.Status)
+		err = fmt.Errorf("task %s %s", app.ShortID(id), r.Status)
 	}
 	return err
-}
-
-var glyphs = map[string]string{"running": "●", "queued": "◌", "succeeded": "✓", "failed": "✗", "canceled": "■", "stale": "!"}
-var modes = map[string]string{"read": "读", "write": "写"}
-
-func short(id string) string {
-	if len(id) > 8 {
-		return id[len(id)-8:]
-	}
-	return id
 }
 
 // line is one row: short id, status, title, agent, mode, turns, repo.
@@ -496,7 +486,7 @@ func line(t *app.Task) string {
 	if t.Group != "" {
 		group = " · #" + t.Group
 	}
-	return fmt.Sprintf("%s %s %s · %s · %s · %s · 第 %d 轮 · %s%s", short(t.ID), glyphs[t.Status], t.Status, t.Name(), t.Who(), modes[t.Mode], len(t.Turns), filepath.Base(t.Repo), group)
+	return fmt.Sprintf("%s %s %s · %s · %s · %s · 第 %d 轮 · %s%s", app.ShortID(t.ID), app.Glyph(t.Status), t.Status, t.Name(), t.Who(), app.ModeName(t.Mode), len(t.Turns), filepath.Base(t.Repo), group)
 }
 
 func printResult(r *app.Result) {

@@ -141,7 +141,7 @@ func (s *Service) Worker(id string) (retErr error) {
 			if err := workspace.RequireClean(info); err != nil && t.BaseTask == "" {
 				return err
 			}
-			if _, err := workspace.CreateWorktree(info, t.Worktree, t.Branch, t.BaseCommit); err != nil {
+			if err := workspace.CreateWorktree(info, t.Worktree, t.Branch, t.BaseCommit); err != nil {
 				return err
 			}
 		} else {
@@ -234,7 +234,7 @@ func (s *Service) Worker(id string) (retErr error) {
 	}
 	checks := make([]verify.Input, 0, len(t.Checks))
 	for i, cmd := range t.Checks {
-		checks = append(checks, verify.Input{ID: fmt.Sprint(i + 1), Command: cmd, Required: true})
+		checks = append(checks, verify.Input{ID: fmt.Sprint(i + 1), Command: cmd})
 	}
 	snapshot := t.BaseCommit
 	if t.Mode == "write" {
