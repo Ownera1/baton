@@ -76,3 +76,31 @@ func TestRolesOverrideAndErrors(t *testing.T) {
 		t.Fatalf("repo role outside repo: %v", err)
 	}
 }
+
+func TestSaveRole(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agents", "drawer.md")
+	b, err := SaveRole(path, nil, [][2]string{{"description", "Draws"}, {"agent", "codex"}, {"model", ""}})
+	if err != nil || string(b) != "---\ndescription: Draws\nagent: codex\n---\n" {
+		t.Fatalf("new: %q %v", b, err)
+	}
+	loaded := []byte("---\n# keep me\ndescription: Draws\nagent: codex\nmode: read\n---\n\nRules.\n")
+	if err := os.WriteFile(path, loaded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	b, err = SaveRole(path, loaded, [][2]string{{"agent", "claude"}, {"mode", ""}, {"model", `"quoted"`}})
+	if err != nil || string(b) != "---\n# keep me\ndescription: Draws\nagent: claude\nmodel: \"\"quoted\"\"\n---\n\nRules.\n" {
+		t.Fatalf("edit: %q %v", b, err)
+	}
+	if r, err := parseRole("drawer", path, b); err != nil || r.Model != `"quoted"` || r.Agent != "claude" || r.Mode != "" || r.Prompt != "Rules." {
+		t.Fatalf("reparse: %+v %v", r, err)
+	}
+	if _, err := SaveRole(path, loaded, [][2]string{{"agent", "gpt"}}); err == nil || !strings.Contains(err.Error(), "not one of") {
+		t.Fatalf("invalid saved: %v", err)
+	}
+	if _, err := SaveRole(path, loaded, [][2]string{{"mode", "write"}}); err != ErrConfigChanged {
+		t.Fatalf("outside edit overwritten: %v", err)
+	}
+	if _, err := SaveRole(filepath.Join(filepath.Dir(path), "codex.md"), nil, [][2]string{{"description", "d"}}); err == nil {
+		t.Fatal("agent name accepted")
+	}
+}

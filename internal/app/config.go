@@ -99,11 +99,9 @@ func (c Config) Marshal() ([]byte, error) {
 }
 
 // ErrConfigChanged means the file changed after it was loaded.
-var ErrConfigChanged = errors.New("config file changed since it was loaded")
+var ErrConfigChanged = errors.New("file changed since it was loaded")
 
-// SaveConfig validates c and replaces the file atomically with mode 0600,
-// omitting empty fields. It refuses when the file no longer holds loaded (nil
-// for a file that did not exist), so an outside edit is never overwritten.
+// SaveConfig validates c and replaces the file, omitting empty fields.
 func SaveConfig(c Config, loaded []byte) ([]byte, error) {
 	if err := c.Validate(); err != nil {
 		return nil, err
@@ -112,26 +110,33 @@ func SaveConfig(c Config, loaded []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	b, err := c.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	return b, replace(path, loaded, b)
+}
+
+// replace writes b to path atomically with mode 0600. It refuses when the
+// file no longer holds loaded (nil for a file that did not exist), so an
+// outside edit is never overwritten.
+func replace(path string, loaded, b []byte) error {
 	current, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		current, err = nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if (current == nil) != (loaded == nil) || !bytes.Equal(current, loaded) {
-		return nil, ErrConfigChanged
-	}
-	b, err := c.Marshal()
-	if err != nil {
-		return nil, err
+		return ErrConfigChanged
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return nil, err
+		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(path), ".config-*.json")
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+"-*")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer os.Remove(f.Name()) // no-op after the rename
 	if _, err = f.Write(b); err == nil {
@@ -143,10 +148,7 @@ func SaveConfig(c Config, loaded []byte) ([]byte, error) {
 	if err == nil {
 		err = os.Rename(f.Name(), path) // CreateTemp files are already 0600
 	}
-	if err != nil {
-		return nil, err
-	}
-	return b, nil
+	return err
 }
 
 func (c Config) Validate() error {
