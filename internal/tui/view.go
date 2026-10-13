@@ -147,7 +147,7 @@ func (m model) listLines(w int) ([]string, []int, int) {
 func (m model) summary(t *app.Task, w int) string {
 	p := m.palette
 	state := p.status(t.Status)
-	pill := p.text(state).Background(p.code).Bold(true).Padding(0, 1).Render(m.glyph(t.Status) + " " + statusName(t.Status))
+	pill := p.text(state).Background(p.code).Bold(true).Padding(0, 1).Render(app.Glyph(t.Status) + " " + statusName(t.Status))
 	lines := []string{rightRow(p.text(p.ink).Bold(true).Render(fit(taskTitle(t), max(1, w-lipgloss.Width(pill)-1))), pill, w)}
 	timing := "共 " + totalElapsed(t, m.now)
 	if t.Status == "running" {
@@ -277,7 +277,7 @@ func (m model) conversation(t *app.Task, w int) string {
 		}
 		fold := p.text(p.faint).Render(fmt.Sprintf("⋯ %d 个工具调用 · e 展开", tools))
 		if i == len(t.Turns)-1 && t.Status == "running" {
-			lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("%s · 第 %d 轮", t.Who(), turn.Number))+p.text(p.run).Render(" · "+m.glyph("running")+" 正在执行 "+elapsed(t, m.now)))
+			lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("%s · 第 %d 轮", t.Who(), turn.Number))+p.text(p.run).Render(" · "+app.Glyph("running")+" 正在执行 "+elapsed(t, m.now)))
 			if m.expand {
 				lines = append(lines, m.eventRows(entry, w))
 			} else {

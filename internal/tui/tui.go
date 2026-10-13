@@ -225,10 +225,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.spinning = false
 			return m, nil
 		}
+		// Only the list spins; the details keep a still glyph, so a frame never
+		// rebuilds them (several ms for a long patch). tickMsg refreshes them.
 		m.frame = (m.frame + 1) % len(spinner)
-		if t := m.task(); t != nil && t.Status == "running" {
-			m.syncViewport() // Redraw cached content; no filesystem or service reads.
-		}
 		return m, spin()
 	case tickMsg:
 		m.now = time.Time(msg)
