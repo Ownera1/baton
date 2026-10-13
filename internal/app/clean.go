@@ -96,7 +96,7 @@ func (s *Service) PlanClean(req CleanRequest) (*CleanPlan, error) {
 				continue
 			}
 			if i, ok := index[t.ID]; !ok || plan.Tasks[i].Keep != "" {
-				plan.Tasks[b].Keep = "任务 " + shortID(t.ID) + " 以它为 base"
+				plan.Tasks[b].Keep = "任务 " + ShortID(t.ID) + " 以它为 base"
 				changed = true
 			}
 		}
@@ -212,7 +212,7 @@ func (p *CleanPlan) Text() string {
 	var remove, keep []string
 	var size int64
 	for _, it := range p.Tasks {
-		line := fmt.Sprintf("  %s %s · %s · %s · %s", shortID(it.ID), it.Title, map[string]string{"write": "写", "read": "只读"}[it.Mode], it.Status, megabytes(it.Bytes))
+		line := fmt.Sprintf("  %s %s · %s · %s · %s", ShortID(it.ID), it.Title, ModeName(it.Mode), it.Status, megabytes(it.Bytes))
 		if it.Mode == "write" && it.Keep == "" {
 			line += map[bool]string{true: " · 已合并", false: " · 未合并"}[it.Merged]
 		}
@@ -237,5 +237,3 @@ func (p *CleanPlan) Text() string {
 }
 
 func megabytes(n int64) string { return fmt.Sprintf("%.1f MB", float64(n)/1e6) }
-
-func shortID(id string) string { return id[max(0, len(id)-8):] }

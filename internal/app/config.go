@@ -1,6 +1,7 @@
 package app
 
 import (
+	"baton/internal/guard"
 	"bytes"
 	"cmp"
 	"encoding/json"
@@ -32,8 +33,12 @@ type Config struct {
 	// Theme is the panel's light or dark palette; empty or auto follows the terminal.
 	Theme string `json:"theme,omitempty"`
 	// MaxParallel caps turns running at once across BATON_HOME; 0 is no limit.
-	MaxParallel int                    `json:"max_parallel,omitempty"`
-	Agents      map[string]AgentConfig `json:"agents,omitempty"`
+	MaxParallel int `json:"max_parallel,omitempty"`
+	// MemoryMB and CPUs bound each agent turn and each check; 0 is the default
+	// (guard.DefaultMemoryMB, guard.DefaultCPUs).
+	MemoryMB int                    `json:"memory_mb,omitempty"`
+	CPUs     int                    `json:"cpus,omitempty"`
+	Agents   map[string]AgentConfig `json:"agents,omitempty"`
 }
 
 // ConfigPath is BATON_CONFIG_DIR, XDG_CONFIG_HOME/baton or ~/.config/baton,
@@ -163,6 +168,12 @@ func (c Config) Validate() error {
 	}
 	if c.MaxParallel < 0 {
 		return fmt.Errorf("max_parallel must be a whole number, 0 for no limit")
+	}
+	if c.MemoryMB < 0 || c.MemoryMB > 0 && c.MemoryMB < 512 {
+		return fmt.Errorf("memory_mb must be at least 512, or 0 for the default %d", guard.DefaultMemoryMB)
+	}
+	if c.CPUs < 0 {
+		return fmt.Errorf("cpus must be a whole number, 0 for the default %d", guard.DefaultCPUs)
 	}
 	for name, a := range c.Agents {
 		if !slices.Contains(Agents, name) {

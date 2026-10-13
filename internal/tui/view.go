@@ -28,30 +28,12 @@ func taskGroup(status string) int {
 		return 2
 	}
 }
-func taskTitle(t *app.Task) string {
-	if t.Title != "" {
-		return strings.ReplaceAll(clean(t.Title), "\n", " ")
-	}
-	if len(t.Turns) > 0 {
-		return app.TitleFromPrompt(t.Turns[0].Prompt)
-	}
-	return "未命名对话"
-}
+func taskTitle(t *app.Task) string { return strings.ReplaceAll(clean(t.Name()), "\n", " ") }
 func (m model) glyph(status string) string {
-	switch status {
-	case "running":
+	if status == "running" {
 		return spinner[m.frame]
-	case "queued":
-		return "◌"
-	case "failed":
-		return "✗"
-	case "stale":
-		return "!"
-	case "succeeded":
-		return "✓"
-	default:
-		return "−"
 	}
+	return app.Glyph(status)
 }
 func statusName(status string) string {
 	switch status {
@@ -69,12 +51,6 @@ func statusName(status string) string {
 		return "已取消"
 	}
 	return status
-}
-func modeName(mode string) string {
-	if mode == "read" {
-		return "读"
-	}
-	return "写"
 }
 func checkMeta(t *app.Task) string {
 	return checkSummary(latestVerify(t), len(t.Checks))
@@ -155,7 +131,7 @@ func (m model) listLines(w int) ([]string, []int, int) {
 			tm := elapsed(t, m.now)
 			left := p.text(p.status(t.Status)).Render(m.glyph(t.Status)) + " " + p.text(p.ink).Bold(true).Render(fit(taskTitle(t), max(1, w-6-lipgloss.Width(tm))))
 			first := stripe + " " + rightRow(left, p.text(p.dim).Render(tm), max(1, w-3)) + " "
-			meta := fmt.Sprintf("%s · %s · 第 %d 轮 · %s", t.Who(), modeName(t.Mode), len(t.Turns), checkMeta(t))
+			meta := fmt.Sprintf("%s · %s · 第 %d 轮 · %s", t.Who(), app.ModeName(t.Mode), len(t.Turns), checkMeta(t))
 			if t.Group != "" {
 				meta = "#" + t.Group + " · " + meta
 			}
@@ -171,7 +147,7 @@ func (m model) listLines(w int) ([]string, []int, int) {
 func (m model) summary(t *app.Task, w int) string {
 	p := m.palette
 	state := p.status(t.Status)
-	pill := p.text(state).Background(p.code).Bold(true).Padding(0, 1).Render(m.glyph(t.Status) + " " + statusName(t.Status))
+	pill := p.text(state).Background(p.code).Bold(true).Padding(0, 1).Render(app.Glyph(t.Status) + " " + statusName(t.Status))
 	lines := []string{rightRow(p.text(p.ink).Bold(true).Render(fit(taskTitle(t), max(1, w-lipgloss.Width(pill)-1))), pill, w)}
 	timing := "共 " + totalElapsed(t, m.now)
 	if t.Status == "running" {
@@ -187,7 +163,7 @@ func (m model) summary(t *app.Task, w int) string {
 	if known {
 		cost = fmt.Sprintf("$%.6f", sum)
 	}
-	meta := fmt.Sprintf("%s · %s / %s · %s · %s · 成本 %s", t.Who(), value(t.Model), value(t.Effort), modeName(t.Mode), timing, cost)
+	meta := fmt.Sprintf("%s · %s / %s · %s · %s · 成本 %s", t.Who(), value(t.Model), value(t.Effort), app.ModeName(t.Mode), timing, cost)
 	if t.BaseTask != "" {
 		meta += " · 接着 " + t.BaseTask[max(0, len(t.BaseTask)-8):]
 	}
@@ -301,7 +277,7 @@ func (m model) conversation(t *app.Task, w int) string {
 		}
 		fold := p.text(p.faint).Render(fmt.Sprintf("⋯ %d 个工具调用 · e 展开", tools))
 		if i == len(t.Turns)-1 && t.Status == "running" {
-			lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("%s · 第 %d 轮", t.Who(), turn.Number))+p.text(p.run).Render(" · "+m.glyph("running")+" 正在执行 "+elapsed(t, m.now)))
+			lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("%s · 第 %d 轮", t.Who(), turn.Number))+p.text(p.run).Render(" · "+app.Glyph("running")+" 正在执行 "+elapsed(t, m.now)))
 			if m.expand {
 				lines = append(lines, m.eventRows(entry, w))
 			} else {
@@ -675,12 +651,6 @@ func value(s string) string {
 		return "默认"
 	}
 	return clean(s)
-}
-func shortID(id string) string {
-	if len(id) > 8 {
-		return id[len(id)-8:]
-	}
-	return id
 }
 func turnDuration(turn app.Turn, now time.Time) time.Duration {
 	if turn.StartedAt == nil {

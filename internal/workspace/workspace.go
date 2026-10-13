@@ -5,6 +5,7 @@ package workspace
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -77,34 +78,25 @@ func RequireClean(info *Info) error {
 	return nil
 }
 
-// Worktree is a task checkout.
-type Worktree struct {
-	Path   string `json:"path"`
-	Branch string `json:"branch"`
-	Base   string `json:"base"`
-}
-
 // CreateWorktree adds a worktree at path on a new branch based on base.
-func CreateWorktree(info *Info, path, branch, base string) (*Worktree, error) {
+func CreateWorktree(info *Info, path, branch, base string) error {
 	if base == "" {
 		base = info.Head
 	}
 	if base == "" {
-		return nil, fmt.Errorf("repository %s has no commits to branch from", info.Root)
+		return fmt.Errorf("repository %s has no commits to branch from", info.Root)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, err
+		return err
 	}
 	if _, err := os.Stat(path); err == nil {
 		entries, _ := os.ReadDir(path)
 		if len(entries) > 0 {
-			return nil, fmt.Errorf("worktree path %s already exists and is not empty", path)
+			return fmt.Errorf("worktree path %s already exists and is not empty", path)
 		}
 	}
-	if _, err := gitOut(info.Root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "-b", branch, path, base); err != nil {
-		return nil, err
-	}
-	return &Worktree{Path: path, Branch: branch, Base: base}, nil
+	_, err := gitOut(info.Root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "-b", branch, path, base)
+	return err
 }
 
 // Git runs a git command in dir and returns trimmed stdout.
@@ -120,8 +112,7 @@ func GitRun(dir string, args ...string) (string, string, int) {
 	err := cmd.Run()
 	code := 0
 	if err != nil {
-		var ee *exec.ExitError
-		if errorsAs(err, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			code = ee.ExitCode()
 		} else {
 			code = -1
@@ -141,14 +132,6 @@ func gitOut(dir string, args ...string) (string, error) {
 		return strings.TrimSpace(out.String()), fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
 	}
 	return strings.TrimSpace(out.String()), nil
-}
-
-func errorsAs(err error, target **exec.ExitError) bool {
-	if ee, ok := err.(*exec.ExitError); ok {
-		*target = ee
-		return true
-	}
-	return false
 }
 
 // stopProcessGroup asks the group to stop, then insists. It returns true when

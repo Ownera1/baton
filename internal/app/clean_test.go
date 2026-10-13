@@ -45,7 +45,7 @@ func TestClean(t *testing.T) {
 		}
 		if mode == "write" {
 			task.Worktree, task.Branch = filepath.Join(dir, "wt"), "baton/"+id
-			if _, err := workspace.CreateWorktree(info, task.Worktree, task.Branch, info.Head); err != nil {
+			if err := workspace.CreateWorktree(info, task.Worktree, task.Branch, info.Head); err != nil {
 				t.Fatal(err)
 			}
 			for _, f := range files {
@@ -90,7 +90,7 @@ func TestClean(t *testing.T) {
 	for _, it := range plan.Tasks {
 		keep[it.ID] = it.Keep
 	}
-	if _, ok := keep[running]; ok || len(keep) != 7 || keep[unmerged] == "" || !strings.Contains(keep[base], shortID(running)) {
+	if _, ok := keep[running]; ok || len(keep) != 7 || keep[unmerged] == "" || !strings.Contains(keep[base], ShortID(running)) {
 		t.Fatalf("plan:\n%s%+v", plan.Text(), keep)
 	}
 	s.Clean(plan)

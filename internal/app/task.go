@@ -138,8 +138,10 @@ type request struct {
 	Prompt  string        `json:"prompt"`
 	Number  int           `json:"number"`
 	Timeout time.Duration `json:"timeout"`
-	// Parallel is max_parallel when the turn was dispatched.
+	// Parallel, MemoryMB and CPUs are the config when the turn was dispatched.
 	Parallel int `json:"parallel,omitempty"`
+	MemoryMB int `json:"memory_mb,omitempty"`
+	CPUs     int `json:"cpus,omitempty"`
 }
 
 // Who names the role and its agent, or just the agent.
@@ -149,6 +151,22 @@ func (t *Task) Who() string {
 	}
 	return t.Agent
 }
+
+var glyphs = map[string]string{"running": "●", "queued": "◌", "succeeded": "✓", "failed": "✗", "canceled": "■", "stale": "!"}
+
+// Glyph marks a status in lists.
+func Glyph(status string) string { return glyphs[status] }
+
+// ModeName is the mode as lists show it.
+func ModeName(mode string) string {
+	if mode == "read" {
+		return "读"
+	}
+	return "写"
+}
+
+// ShortID is the end of an id, unique enough to show and to resolve.
+func ShortID(id string) string { return id[max(0, len(id)-8):] }
 
 // Name is the title, or one inferred from the first prompt.
 func (t *Task) Name() string {

@@ -145,7 +145,7 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 			t.Warnings = append(t.Warnings, "pi write 模式没有沙箱；worktree 仅隔离 Git 改动。")
 		}
 	}
-	return s.submit(dir, request{Task: t, Prompt: prompt, Number: 1, Timeout: timeout, Parallel: cfg.MaxParallel})
+	return s.submit(dir, request{Task: t, Prompt: prompt, Number: 1, Timeout: timeout, Parallel: cfg.MaxParallel, MemoryMB: cfg.MemoryMB, CPUs: cfg.CPUs})
 }
 
 func (s *Service) submit(dir string, req request) (*Submitted, error) {
@@ -333,7 +333,7 @@ func (s *Service) Reply(in ReplyRequest) (*Submitted, error) {
 			return nil, fmt.Errorf("cannot resume dirty worktree: %w", err)
 		}
 	}
-	return s.submit(dir, request{Task: *t, Prompt: prompt, Number: len(t.Turns) + 1, Timeout: timeout, Parallel: cfg.MaxParallel})
+	return s.submit(dir, request{Task: *t, Prompt: prompt, Number: len(t.Turns) + 1, Timeout: timeout, Parallel: cfg.MaxParallel, MemoryMB: cfg.MemoryMB, CPUs: cfg.CPUs})
 }
 
 func (s *Service) Cancel(id string) (*Task, error) {

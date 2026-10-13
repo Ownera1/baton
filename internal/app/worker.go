@@ -6,6 +6,7 @@ import (
 	"baton/internal/verify"
 	"baton/internal/workspace"
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -141,7 +142,7 @@ func (s *Service) Worker(id string) (retErr error) {
 			if err := workspace.RequireClean(info); err != nil && t.BaseTask == "" {
 				return err
 			}
-			if _, err := workspace.CreateWorktree(info, t.Worktree, t.Branch, t.BaseCommit); err != nil {
+			if err := workspace.CreateWorktree(info, t.Worktree, t.Branch, t.BaseCommit); err != nil {
 				return err
 			}
 		} else {
@@ -172,8 +173,9 @@ func (s *Service) Worker(id string) (retErr error) {
 	if err := os.MkdirAll(cache, 0700); err != nil {
 		return err
 	}
-	argv, err := agent.Argv(t.Agent, agent.Options{Path: t.AgentPath, Mode: t.Mode, Dir: runDir, Prompt: prefix + req.Prompt,
-		Model: t.Model, Effort: t.Effort, SessionID: t.SessionID, LastFile: lastFile, Cache: cache})
+	opts := agent.Options{Path: t.AgentPath, Mode: t.Mode, Dir: runDir, Prompt: prefix + req.Prompt,
+		Model: t.Model, Effort: t.Effort, SessionID: t.SessionID, LastFile: lastFile, Cache: cache}
+	argv, err := agent.Argv(t.Agent, opts)
 	if err != nil {
 		return err
 	}
@@ -195,12 +197,12 @@ func (s *Service) Worker(id string) (retErr error) {
 	defer devnull.Close()
 	// A check waits for other tasks' checks as long as the turn may run; ctx
 	// bounds the wait, so a slow check elsewhere never fails this one.
-	limits := guard.Limits{CPUs: guard.DefaultCPUs, Nice: guard.DefaultNice, MemoryMB: guard.DefaultMemoryMB, GateWait: req.Timeout}
+	limits := guard.Limits{CPUs: cmp.Or(req.CPUs, guard.DefaultCPUs), Nice: guard.DefaultNice, MemoryMB: cmp.Or(req.MemoryMB, guard.DefaultMemoryMB), GateWait: req.Timeout}
 	stdin := io.Reader(devnull)
 	if agent.PromptOnStdin(t.Agent) {
 		stdin = strings.NewReader(prefix + req.Prompt)
 	}
-	cr := workspace.RunArgv(runDir, argv, stdin, os.Environ(), workspace.RunOptions{
+	cr := workspace.RunArgv(runDir, argv, stdin, append(os.Environ(), agent.Env(t.Agent, opts)...), workspace.RunOptions{
 		Context: ctx, Limits: limits, Stdout: out, Stderr: errout, Note: func(msg string) { fmt.Fprintln(os.Stderr, msg) },
 	})
 	turn.ExitCode = cr.ExitCode
@@ -234,7 +236,7 @@ func (s *Service) Worker(id string) (retErr error) {
 	}
 	checks := make([]verify.Input, 0, len(t.Checks))
 	for i, cmd := range t.Checks {
-		checks = append(checks, verify.Input{ID: fmt.Sprint(i + 1), Command: cmd, Required: true})
+		checks = append(checks, verify.Input{ID: fmt.Sprint(i + 1), Command: cmd})
 	}
 	snapshot := t.BaseCommit
 	if t.Mode == "write" {

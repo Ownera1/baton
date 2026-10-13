@@ -48,6 +48,8 @@ baton                                     # 打开面板（同 baton tui）
   "timeout": "2h",
   "theme": "dark",
   "max_parallel": 4,
+  "memory_mb": 8192,
+  "cpus": 4,
   "agents": {
     "codex":  { "model": "gpt-5.5", "effort": "high" },
     "claude": { "model": "opus", "effort": "xhigh" },
@@ -57,9 +59,9 @@ baton                                     # 打开面板（同 baton tui）
 }
 ```
 
-优先级：命令行或 MCP 参数 > `BATON_AGENT`（仅 Agent）> 配置 > 内置默认。`effort` 原样传给 Agent（codex 为 `model_reasoning_effort`，pi 为 `--thinking`），取值以各 Agent 为准。`path` 写绝对路径或 PATH 里的命令名。配置在派活时读取，模型、effort、路径写入任务，`reply` 沿用，之后改配置不影响已有对话；MCP 每次派活重新读取，无需重启。未知字段、未知 Agent 名或无法解析的超时会直接报错，不会悄悄回退。`max_parallel` 限制同一个 `BATON_HOME` 下同时运行的轮数（Agent 加检查），多出的任务保持 queued，有空位再开始，排队时也能取消；派活时记下，不写或 0 为不限。`hidden: true` 让主 Agent 看不到这个 Agent：MCP 的 `baton_agents` 不列出，`baton_run`、`baton_reply`（包括没写 Agent 而落到默认值的情况）直接报错；状态、结果、取消不受影响，你在终端里用 CLI 也不受影响。
+优先级：命令行或 MCP 参数 > `BATON_AGENT`（仅 Agent）> 配置 > 内置默认。`effort` 原样传给 Agent（codex 为 `model_reasoning_effort`，pi 为 `--thinking`），取值以各 Agent 为准。`path` 写绝对路径或 PATH 里的命令名。配置在派活时读取，模型、effort、路径写入任务，`reply` 沿用，之后改配置不影响已有对话；MCP 每次派活重新读取，无需重启。未知字段、未知 Agent 名或无法解析的超时会直接报错，不会悄悄回退。`max_parallel` 限制同一个 `BATON_HOME` 下同时运行的轮数（Agent 加检查），多出的任务保持 queued，有空位再开始，排队时也能取消；派活时记下，不写或 0 为不限。`memory_mb` 和 `cpus` 是每轮 Agent 和每条检查各自的资源预算，默认 3072 MB 和 2：内存是整个进程组的硬上限，超过就停掉，这一轮记为失败，大仓库构建或测试常被停掉时调高；`cpus` 设置 `GOMAXPROCS`、`GOFLAGS=-p`、`MAKEFLAGS=-j`、`CARGO_BUILD_JOBS` 等并降低调度优先级，不是硬限制。两者也在派活时记下。`hidden: true` 让主 Agent 看不到这个 Agent：MCP 的 `baton_agents` 不列出，`baton_run`、`baton_reply`（包括没写 Agent 而落到默认值的情况）直接报错；状态、结果、取消不受影响，你在终端里用 CLI 也不受影响。
 
-在终端里运行 `baton config`，或在面板里按 `s`，左栏换成设置：24 项配置（全局 `agent`、`timeout`、`max_parallel`，面板 `theme`，每个 Agent 的 `model`、`effort`、`path`、`hidden`），再是当前目录可见的[角色](#角色)：`name` 一行选角色，下面是它的 `description`、`agent`、`model`、`effort`、`mode`、`hidden` 和角色文件，右栏说明当前项：可选值、该 Agent 一次写任务的完整命令（配置带来的参数高亮）和保存后的文件（改动行标 `+`）。`←`/`→` 切换取值（effort 取值来自各 CLI 的 `--help`，grok 未列出只能输入），`enter` 输入任意值，`d` 恢复默认，`u` 撤销本项，`ctrl+s` 保存，`esc` 或 `s` 回到对话。在 `name` 一行按 `enter` 输入名称检索角色（前缀优先，再按 `-` 分隔的词，再到包含），`↑↓` 选择、`enter` 打开；输入还没有的名称再 `enter` 新建全局角色，填好 `description` 后 `ctrl+s` 创建文件，保存前在文件一项按 `d` 放弃。`←`/`→` 依次切换角色，右栏列出全部角色，未保存的标 `●`；切换角色不丢改动，`ctrl+s` 一起保存。角色的 `effort` 取值跟随它的 Agent；保存只改动过的 front matter 行，注释、其他字段和正文不动。在角色文件一项按 `enter` 用 `$VISUAL` 或 `$EDITOR`（默认 `vi`）编辑整个文件，退出编辑器后重新读取；有未保存改动的角色要先保存。读取出错的角色只列出文件一项和错误，可以直接打开修。空值即默认，灰色显示实际会用什么；`path` 找不到时提示但允许保存，校验不过的值标红且不能保存。保存先写临时文件再改名替换，权限 0600；打开后文件被外部改过则拒绝覆盖，按 `r` 重新读取。未保存的改动离开设置后仍保留，顶栏提示数量，按 `q` 退出前要再确认一次。
+在终端里运行 `baton config`，或在面板里按 `s`，左栏换成设置：26 项配置（全局 `agent`、`timeout`、`max_parallel`，面板 `theme`，资源 `memory_mb`、`cpus`，每个 Agent 的 `model`、`effort`、`path`、`hidden`），再是当前目录可见的[角色](#角色)：`name` 一行选角色，下面是它的 `description`、`agent`、`model`、`effort`、`mode`、`hidden` 和角色文件，右栏说明当前项：可选值、该 Agent 一次写任务的完整命令（配置带来的参数高亮）和保存后的文件（改动行标 `+`）。`←`/`→` 切换取值（effort 取值来自各 CLI 的 `--help`，grok 未列出只能输入），`enter` 输入任意值，`d` 恢复默认，`u` 撤销本项，`ctrl+s` 保存，`esc` 或 `s` 回到对话。在 `name` 一行按 `enter` 输入名称检索角色（前缀优先，再按 `-` 分隔的词，再到包含），`↑↓` 选择、`enter` 打开；输入还没有的名称再 `enter` 新建全局角色，填好 `description` 后 `ctrl+s` 创建文件，保存前在文件一项按 `d` 放弃。`←`/`→` 依次切换角色，右栏列出全部角色，未保存的标 `●`；切换角色不丢改动，`ctrl+s` 一起保存。角色的 `effort` 取值跟随它的 Agent；保存只改动过的 front matter 行，注释、其他字段和正文不动。在角色文件一项按 `enter` 用 `$VISUAL` 或 `$EDITOR`（默认 `vi`）编辑整个文件，退出编辑器后重新读取；有未保存改动的角色要先保存。读取出错的角色只列出文件一项和错误，可以直接打开修。空值即默认，灰色显示实际会用什么；`path` 找不到时提示但允许保存，校验不过的值标红且不能保存。保存先写临时文件再改名替换，权限 0600；打开后文件被外部改过则拒绝覆盖，按 `r` 重新读取。未保存的改动离开设置后仍保留，顶栏提示数量，按 `q` 退出前要再确认一次。
 
 ### 接力
 
@@ -173,9 +175,9 @@ git merge baton/<a1 的 ID> baton/<b2 的 ID>                 → 主 Agent 用�
 → 告诉用户：合并了哪些分支，没合并的是哪个、为什么
 ```
 
-数据默认保存在 `~/.local/share/baton`，可通过 `BATON_HOME` 修改。每个 `tasks/<id>/` 保存原子更新的 `task.json`、原样的 `turn-n.stdout/stderr`、Codex 的 `turn-n.last`、`patch.diff`、`checks/turn-n/`、`artifacts/` 和 `worker.log`。`request.json` 是启动/续接信箱，`lock` 串行保护同一任务，`worker.pid` 记录启动 PID，`cancel-n` 是取消标记；只有 worker 写 `task.json`。`cache/` 是 codex 写任务共用的 Go 构建缓存：沙箱不让写默认缓存，codex 会在 worktree 里建 `.cache/go-build`（几百 MB），被 Baton 的提交带进分支；现在 Baton 把它设为沙箱里唯一的额外可写目录，并通过 `shell_environment_policy.set.GOCACHE` 指过去（这会替换 codex 配置里的 `writable_roots`）。同一个 BATON_HOME 下的 `check-gate.lock` 跨进程串行运行所有检查，配置了 `max_parallel` 时 `slots/<n>.lock` 限制同时运行的轮数。
+数据默认保存在 `~/.local/share/baton`，可通过 `BATON_HOME` 修改。每个 `tasks/<id>/` 保存原子更新的 `task.json`、原样的 `turn-n.stdout/stderr`、Codex 的 `turn-n.last`、`patch.diff`、`checks/turn-n/`、`artifacts/` 和 `worker.log`。`request.json` 是启动/续接信箱，`lock` 串行保护同一任务，`worker.pid` 记录启动 PID，`cancel-n` 是取消标记；只有 worker 写 `task.json`。`cache/` 是 codex 写任务共用的 Go 构建缓存：沙箱不让写默认缓存，codex 会在 worktree 里建 `.cache/go-build`（几百 MB），被 Baton 的提交带进分支；现在 Baton 把它设为沙箱里唯一的额外可写目录，并通过 `shell_environment_policy.set.GOCACHE` 指过去（这会替换 codex 配置里的 `writable_roots`）。grok 写任务的 `--sandbox workspace` 同样不让写默认缓存，也不让写 `cache/`，只放行临时目录，所以它的 `GOCACHE` 设为 `$TMPDIR/baton-go-build`，grok 写任务之间共用。同一个 BATON_HOME 下的 `check-gate.lock` 跨进程串行运行所有检查，配置了 `max_parallel` 时 `slots/<n>.lock` 限制同时运行的轮数。
 
-安全边界：Baton 不 push、不切换用户分支、不传任何 bypass / skip-permissions / always-approve / danger-full-access 参数。子 Agent 不能再派活：worker 给 Agent 和检查设置 `BATON_DEPTH=1`，带着它的 `do`/`ask`/`run`/`reply`（含 MCP）直接报错；codex 启动 MCP 服务时不传父进程环境，所以还会沿父进程往上找 `baton _worker`（每级一次 `ps`），找到同样拒绝；仓库位于 `$BATON_HOME/tasks/` 下（任务 worktree）时也拒绝。worktree 隔离代码改动，Agent 仍沿用自身权限机制。**Pi write 没有沙箱**，结果中也会提示；用户提供的检查通过 `/bin/sh -c` 执行，同样没有安全沙箱。RSS 每秒采样，默认 3072 MB 上限，CPU 并行提示为 2、nice 为 10；这些限制不能约束主动脱离进程组的程序。应对所有实例使用同一 BATON_HOME 才能共享全机检查锁。
+安全边界：Baton 不 push、不切换用户分支、不传任何 bypass / skip-permissions / always-approve / danger-full-access 参数。子 Agent 不能再派活：worker 给 Agent 和检查设置 `BATON_DEPTH=1`，带着它的 `do`/`ask`/`run`/`reply`（含 MCP）直接报错；codex 启动 MCP 服务时不传父进程环境，所以还会沿父进程往上找 `baton _worker`（每级一次 `ps`），找到同样拒绝；仓库位于 `$BATON_HOME/tasks/` 下（任务 worktree）时也拒绝。worktree 隔离代码改动，Agent 仍沿用自身权限机制。**Pi write 没有沙箱**，结果中也会提示；用户提供的检查通过 `/bin/sh -c` 执行，同样没有安全沙箱。RSS 每秒采样，默认 3072 MB 上限，CPU 并行提示为 2（`memory_mb`、`cpus` 可改）、nice 为 10；这些限制不能约束主动脱离进程组的程序。应对所有实例使用同一 BATON_HOME 才能共享全机检查锁。
 
 已知限制：仅支持 macOS/Linux；PID 存活检查无法识别 PID 复用，意外死亡报告 stale；SIGKILL 无法执行 worker 的清理逻辑，可能遗留子进程。read 使用 Agent 的只读模式，允许源仓库已有改动；它不是独立的 OS 沙箱。任务、分支和 worktree 保留供审阅，暂未提供清理命令。未提供成本的 Agent 保持成本未知，不估算；result 的顶层回复/用量/成本属于最近一轮，历轮记录在 turns。适配器通过真实输出样本和假 Agent 验证，本项目测试不调用真实服务。
 

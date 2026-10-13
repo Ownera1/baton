@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -42,6 +44,16 @@ func Argv(name string, o Options) ([]string, error) {
 // PromptOnStdin reports whether the agent reads Options.Prompt from stdin
 // instead of argv, where Linux caps one argument at 128 KiB.
 func PromptOnStdin(name string) bool { return name == "codex" || name == "claude" }
+
+// Env is added to the worker's environment for the agent's process.
+func Env(name string, o Options) []string {
+	if name == "grok" && o.Mode == "write" {
+		// grok's workspace sandbox blocks the default Go cache and o.Cache as
+		// well, but leaves the temporary directory writable (grok 1.0.41).
+		return []string{"GOCACHE=" + filepath.Join(os.TempDir(), "baton-go-build")}
+	}
+	return nil
+}
 
 // Args builds the agent's arguments without looking up its executable.
 func Args(name string, o Options) ([]string, error) {

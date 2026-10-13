@@ -31,7 +31,6 @@ type Outcome struct {
 	ID         string    `json:"id"`
 	Command    string    `json:"command"`
 	Cwd        string    `json:"cwd"`
-	Required   bool      `json:"required"`
 	Status     string    `json:"status"`
 	ExitCode   int       `json:"exit_code"`
 	DurationMS int64     `json:"duration_ms"`
@@ -65,13 +64,10 @@ type Result struct {
 	Notes string `json:"notes"`
 }
 
-// Input is one check to run.
+// Input is one check to run, in the worktree.
 type Input struct {
-	ID       string
-	Command  string
-	Cwd      string
-	Required bool
-	Timeout  time.Duration
+	ID      string
+	Command string
 }
 
 // Options are the machine limits a verification round runs under.
@@ -118,14 +114,7 @@ func runOne(taskID string, round int, worktree, logDir string, c Input, defaultT
 		ctx = context.Background()
 	}
 	cwd := worktree
-	if c.Cwd != "" {
-		if filepath.IsAbs(c.Cwd) {
-			cwd = c.Cwd
-		} else {
-			cwd = filepath.Join(worktree, c.Cwd)
-		}
-	}
-	o = Outcome{ID: c.ID, Command: c.Command, Cwd: cwd, Required: c.Required, StartedAt: time.Now().UTC(), Status: StatusUnavailable, ExitCode: -1}
+	o = Outcome{ID: c.ID, Command: c.Command, Cwd: cwd, StartedAt: time.Now().UTC(), Status: StatusUnavailable, ExitCode: -1}
 	defer func() {
 		if o.LogPath != "" {
 			return
@@ -140,17 +129,14 @@ func runOne(taskID string, round int, worktree, logDir string, c Input, defaultT
 		}
 		o.DurationMS = o.EndedAt.Sub(o.StartedAt).Milliseconds()
 	}()
-	timeout := c.Timeout
-	if timeout <= 0 {
-		timeout = defaultTimeout
-	}
+	timeout := defaultTimeout
 	if strings.TrimSpace(c.Command) == "" {
 		o.Reason = "check has an empty command"
 		o.EndedAt = time.Now().UTC()
 		return o
 	}
 	if st, err := os.Stat(cwd); err != nil || !st.IsDir() {
-		o.Reason = fmt.Sprintf("working directory %s does not exist in the worktree", cwd)
+		o.Reason = fmt.Sprintf("worktree %s does not exist", cwd)
 		o.EndedAt = time.Now().UTC()
 		return o
 	}
@@ -230,15 +216,10 @@ func runOne(taskID string, round int, worktree, logDir string, c Input, defaultT
 	return o
 }
 
-// summarize decides the round outcome from the required checks only: an
-// optional check is recorded but cannot decide anything.
+// summarize decides the round outcome: every check is required.
 func summarize(checks []Outcome) (string, string) {
-	var failed, unavailable, passed, optional int
+	var failed, unavailable, passed int
 	for _, c := range checks {
-		if !c.Required {
-			optional++
-			continue
-		}
 		switch c.Status {
 		case StatusPass:
 			passed++
@@ -249,9 +230,6 @@ func summarize(checks []Outcome) (string, string) {
 		}
 	}
 	note := fmt.Sprintf("%d required checks passed, %d failed, %d could not be run", passed, failed, unavailable)
-	if optional > 0 {
-		note += fmt.Sprintf(", %d optional check(s) recorded", optional)
-	}
 	switch {
 	case unavailable > 0:
 		return StatusUnavailable, note + "; an unrunnable required check is not a pass"

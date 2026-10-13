@@ -3,6 +3,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -25,10 +26,9 @@ type RunOptions struct {
 	// termination path as a timeout, so children die with it.
 	Context context.Context
 	// Note receives one-line notices about limit enforcement, for the log.
-	Note    func(string)
-	OnStart func(int) error
-	Stdout  io.Writer
-	Stderr  io.Writer
+	Note   func(string)
+	Stdout io.Writer
+	Stderr io.Writer
 }
 
 // CommandResult is the outcome of one check command.
@@ -140,15 +140,6 @@ func RunArgv(dir string, argv []string, stdin io.Reader, env []string, opts RunO
 
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	if opts.OnStart != nil {
-		if err := opts.OnStart(cmd.Process.Pid); err != nil {
-			res.StartErr = "process registration failed: " + err.Error()
-			res.Stopped = true
-			res.Killed = terminateGroup(cmd, done)
-			res.ExitCode = -1
-			return res
-		}
-	}
 
 	stopCh := make(chan stopReason, 1)
 	watch := newResourceWatch(cmd.Process.Pid, limits, stopCh, func(msg string) {
@@ -171,7 +162,7 @@ func RunArgv(dir string, argv []string, stdin io.Reader, env []string, opts RunO
 		_ = signalProcessGroup(cmd, killSignal)
 	case reason := <-stopCh:
 		res.Stopped = true
-		res.Killed = terminateGroup(cmd, done)
+		res.Killed = stopProcessGroup(cmd, done)
 		res.MemoryExceeded = reason == stopMemory
 		if reason == stopMonitor {
 			res.StartErr = "resource monitoring became unavailable"
@@ -179,13 +170,13 @@ func RunArgv(dir string, argv []string, stdin io.Reader, env []string, opts RunO
 		res.ExitCode = -1
 	case <-ctx.Done():
 		res.Stopped = true
-		res.Killed = terminateGroup(cmd, done)
+		res.Killed = stopProcessGroup(cmd, done)
 		res.TimedOut = ctx.Err() == context.DeadlineExceeded
 		res.Canceled = !res.TimedOut
 		res.ExitCode = -1
 	case <-timeout:
 		res.Stopped = true
-		res.Killed = terminateGroup(cmd, done)
+		res.Killed = stopProcessGroup(cmd, done)
 		res.TimedOut = true
 		res.ExitCode = -1
 	}
@@ -217,17 +208,11 @@ func RunArgv(dir string, argv []string, stdin io.Reader, env []string, opts RunO
 	return res
 }
 
-// terminateGroup ends a check and everything it started, politely first.
-func terminateGroup(cmd *exec.Cmd, done <-chan error) bool {
-	return stopProcessGroup(cmd, done)
-}
-
 func exitCodeOf(err error) int {
 	if err == nil {
 		return 0
 	}
-	var ee *exec.ExitError
-	if errorsAs(err, &ee) {
+	if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 		return ee.ExitCode()
 	}
 	return -1
