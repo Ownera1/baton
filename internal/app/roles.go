@@ -2,6 +2,7 @@ package app
 
 import (
 	"baton/internal/workspace"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,10 +24,24 @@ type Role struct {
 	Mode        string // empty allows both; read or write refuses the other
 	Hidden      bool
 	Prompt      string
-	Err         error // the file cannot be used; the role is listed with this error
+	Raw         []byte // the file as read, for SaveRole
+	Err         error  // the file cannot be used; the role is listed with this error
 }
 
 var roleName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+var errNoDescription = errors.New("description is required; the main agent picks roles by it")
+
+// CheckRoleName refuses a name that cannot be a role's file name.
+func CheckRoleName(name string) error {
+	switch {
+	case !roleName.MatchString(name):
+		return errors.New("role names use lowercase letters, digits, - and _")
+	case slices.Contains(Agents, name):
+		return fmt.Errorf("%s is an agent name, rename the role", name)
+	}
+	return nil
+}
 
 // RoleDirs are the global directory next to config.json, then the
 // repository's .baton/agents, which replaces global roles of the same name.
@@ -49,17 +64,14 @@ func Roles(dir string) []Role {
 		for _, path := range paths {
 			name := strings.TrimSuffix(filepath.Base(path), ".md")
 			r := Role{Name: name, Path: path}
-			switch {
-			case !roleName.MatchString(name):
-				r.Err = fmt.Errorf("%s: role names use lowercase letters, digits, - and _", path)
-			case slices.Contains(Agents, name):
-				r.Err = fmt.Errorf("%s: %s is an agent name, rename the role", path, name)
-			default:
+			if err := CheckRoleName(name); err != nil {
+				r.Err = fmt.Errorf("%s: %w", path, err)
+			} else {
 				b, err := os.ReadFile(path)
 				if err == nil {
 					r, err = parseRole(name, path, b)
 				}
-				r.Err = err
+				r.Raw, r.Err = b, err
 			}
 			byName[name] = r
 		}
@@ -106,42 +118,100 @@ func parseRole(name, path string, b []byte) (Role, error) {
 			return r, fmt.Errorf("%s: %q is not key: value", path, line)
 		case value == "|" || value == ">":
 			return r, fmt.Errorf("%s: %s: multi-line values are not supported", path, key)
-		case value == "" && key != "name" && key != "description":
-			continue // an empty value is the default
 		}
-		switch key {
-		case "name":
-			if value != name {
-				return r, fmt.Errorf("%s: name %q differs from the file name %q", path, value, name)
-			}
-		case "description":
-			r.Description = value
-		case "agent":
-			if !slices.Contains(Agents, value) {
-				return r, fmt.Errorf("%s: agent %q is not one of %s", path, value, strings.Join(Agents, ", "))
-			}
-			r.Agent = value
-		case "model":
-			r.Model = value
-		case "effort":
-			r.Effort = value
-		case "mode":
-			if value != "read" && value != "write" {
-				return r, fmt.Errorf("%s: mode must be read or write", path)
-			}
-			r.Mode = value
-		case "hidden":
-			if value != "true" && value != "false" {
-				return r, fmt.Errorf("%s: hidden must be true or false", path)
-			}
-			r.Hidden = value == "true"
-		default:
-			return r, fmt.Errorf("%s: unknown key %q; use name, description, agent, model, effort, mode or hidden", path, key)
+		if err := r.Set(key, value); err != nil {
+			return r, fmt.Errorf("%s: %w", path, err)
 		}
 	}
 	if r.Description == "" {
-		return r, fmt.Errorf("%s: description is required; the main agent picks roles by it", path)
+		return r, fmt.Errorf("%s: %w", path, errNoDescription)
 	}
 	r.Prompt = strings.TrimSpace(strings.Join(lines[end+1:], "\n"))
 	return r, nil
+}
+
+// Set assigns one front matter value; empty is the default.
+func (r *Role) Set(key, value string) error {
+	switch key {
+	case "name":
+		if value != r.Name {
+			return fmt.Errorf("name %q differs from the file name %q", value, r.Name)
+		}
+	case "description":
+		if value == "" {
+			return errNoDescription
+		}
+		r.Description = value
+	case "agent":
+		if value != "" && !slices.Contains(Agents, value) {
+			return fmt.Errorf("agent %q is not one of %s", value, strings.Join(Agents, ", "))
+		}
+		r.Agent = value
+	case "model":
+		r.Model = value
+	case "effort":
+		r.Effort = value
+	case "mode":
+		if value != "" && value != "read" && value != "write" {
+			return errors.New("mode must be read or write")
+		}
+		r.Mode = value
+	case "hidden":
+		if value != "" && value != "true" && value != "false" {
+			return errors.New("hidden must be true or false")
+		}
+		r.Hidden = value == "true"
+	default:
+		return fmt.Errorf("unknown key %q; use name, description, agent, model, effort, mode or hidden", key)
+	}
+	return nil
+}
+
+// SaveRole sets front matter keys in the role file at path, keeping comments,
+// other keys and the body; an empty value removes the key. loaded is the file
+// as read, nil for a new role; like SaveConfig it refuses an outside edit.
+func SaveRole(path string, loaded []byte, set [][2]string) ([]byte, error) {
+	name := strings.TrimSuffix(filepath.Base(path), ".md")
+	if err := CheckRoleName(name); err != nil {
+		return nil, err
+	}
+	b := RoleFile(loaded, set)
+	if _, err := parseRole(name, path, b); err != nil {
+		return nil, err
+	}
+	return b, replace(path, loaded, b)
+}
+
+// RoleFile is loaded with set applied, as SaveRole writes it; a file without
+// front matter is returned unchanged.
+func RoleFile(loaded []byte, set [][2]string) []byte {
+	lines := strings.Split(strings.ReplaceAll(string(loaded), "\r\n", "\n"), "\n")
+	if loaded == nil {
+		lines = []string{"---", "---", ""}
+	}
+	end := slices.Index(lines[1:], "---") + 1
+	if lines[0] != "---" || end == 0 {
+		return loaded
+	}
+	for _, kv := range set {
+		key, value := kv[0], kv[1]
+		if value != "" && (value[0] == '"' || value[0] == '\'') {
+			value = `"` + value + `"` // parseRole strips one pair of quotes
+		}
+		i := 1 + slices.IndexFunc(lines[1:end], func(line string) bool {
+			k, _, ok := strings.Cut(line, ":")
+			return ok && strings.TrimSpace(k) == key
+		})
+		switch {
+		case i > 0 && value == "":
+			lines = slices.Delete(lines, i, i+1)
+			end--
+		case i > 0:
+			lines[i] = key + ": " + value
+		case value != "":
+			lines = slices.Insert(lines, end, key+": "+value)
+			end++
+		}
+	}
+	return []byte(strings.Join(lines, "\n"))
 }

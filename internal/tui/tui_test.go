@@ -886,3 +886,106 @@ func TestMaxParallelSetting(t *testing.T) {
 		t.Fatal("typo not flagged")
 	}
 }
+
+func TestRoleSettings(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("BATON_CONFIG_DIR", dir)
+	t.Setenv("BATON_AGENT", "")
+	t.Chdir(t.TempDir()) // no repository roles
+	agents := filepath.Join(dir, "agents")
+	if err := os.MkdirAll(agents, 0700); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(agents, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func(name string) string {
+		b, _ := os.ReadFile(filepath.Join(agents, name))
+		return string(b)
+	}
+	write("drawer.md", "---\n# keep\ndescription: Draws\nagent: codex\nmode: read\n---\n\nRules.\n")
+	write("broken.md", "no front matter")
+	right, enter, ctrlS := tea.KeyMsg{Type: tea.KeyRight}, tea.KeyMsg{Type: tea.KeyEnter}, tea.KeyMsg{Type: tea.KeyCtrlS}
+	m, _ := update(newModel(&app.Service{Home: t.TempDir()}, "dark"), key("s"))
+	at := func(role, k string) {
+		t.Helper()
+		if m.set.cursor = m.set.fieldAt(role, k); m.set.cursor < 0 {
+			t.Fatalf("no field %s.%s", role, k)
+		}
+	}
+	press := func(keys ...tea.KeyMsg) tea.Cmd {
+		var cmd tea.Cmd
+		for _, k := range keys {
+			m, cmd = update(m, k)
+		}
+		return cmd
+	}
+
+	// A broken role only offers its file, with the parse error.
+	at("broken", "file")
+	if m.set.fieldAt("broken", "agent") >= 0 || !strings.Contains(ansi.Strip(m.View()+m.details()), "start with front matter") {
+		t.Fatalf("broken role:\n%s", ansi.Strip(m.View()+m.details()))
+	}
+
+	// agent cycles, effort offers the new agent's levels, mode clears.
+	at("drawer", "agent")
+	press(right)
+	at("drawer", "effort")
+	press(right)
+	at("drawer", "mode")
+	press(right, right)
+	r := m.set.draft.Roles["drawer"]
+	view := ansi.Strip(m.View() + m.details())
+	if r.Agent != "claude" || r.Effort != "low" || r.Mode != "" || m.set.changed() != 3 {
+		t.Fatalf("draft: %+v %d", r, m.set.changed())
+	}
+	for _, want := range []string{"角色 DRAWER", "默认（读写都可）", "+ agent: claude", "+ effort: low", "--effort low", "Rules."} {
+		if want == "Rules." {
+			at("drawer", "file")
+			view = ansi.Strip(m.View() + m.details())
+		}
+		if !strings.Contains(view, want) {
+			t.Errorf("missing %q:\n%s", want, view)
+		}
+	}
+	if cmd := press(enter); cmd != nil || !strings.Contains(m.notice, "先 ctrl+s") {
+		t.Fatal("editor opened over unsaved changes")
+	}
+	press(ctrlS)
+	if got := read("drawer.md"); m.set.changed() != 0 || got != "---\n# keep\ndescription: Draws\nagent: claude\neffort: low\n---\n\nRules.\n" {
+		t.Fatalf("save: %d %q %q", m.set.changed(), got, m.notice)
+	}
+
+	// The editor runs on a saved role; its edits are read back.
+	if cmd := press(enter); cmd == nil {
+		t.Fatal("editor not opened")
+	}
+	write("drawer.md", "---\ndescription: Draws more\n---\nNew rules.\n")
+	m, _ = update(m, editedMsg{name: "drawer"})
+	if r := m.set.draft.Roles["drawer"]; r.Description != "Draws more" || r.Prompt != "New rules." || m.set.saved.Roles["drawer"].Description != "Draws more" || m.set.fields[m.set.cursor].role != "drawer" {
+		t.Fatalf("reload: %+v", r)
+	}
+
+	// n adds a role; it saves once described, and d on its file drops it.
+	press(key("n"), key("Bad"), enter)
+	if !m.set.naming || !strings.Contains(m.notice, "lowercase") {
+		t.Fatal("bad name accepted")
+	}
+	press(tea.KeyMsg{Type: tea.KeyCtrlU}, key("tester"), enter, ctrlS)
+	if m.set.naming || m.set.changed() != 1 || !strings.Contains(m.notice, "有误") || read("tester.md") != "" {
+		t.Fatalf("new role saved without description: %q", m.notice)
+	}
+	press(enter, key("Tests"), enter, ctrlS)
+	if got := read("tester.md"); got != "---\ndescription: Tests\n---\n" || m.set.changed() != 0 {
+		t.Fatalf("new role: %q %q", got, m.notice)
+	}
+	press(key("n"), key("scratch"), enter)
+	at("scratch", "file")
+	if press(key("d")); m.set.changed() != 0 || m.set.fieldAt("scratch", "file") >= 0 {
+		t.Fatal("d did not drop the new role")
+	}
+	assertSize(t, m.View(), m.width, m.height)
+}

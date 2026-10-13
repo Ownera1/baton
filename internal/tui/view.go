@@ -609,10 +609,15 @@ func (m model) footer() string {
 	if m.settingsMode && m.set.quit {
 		return p.text(p.bad).Background(p.badBG).Width(m.width).Render(fit(fmt.Sprintf("设置有 %d 项未保存，再按 q 放弃并退出，其他键返回", m.set.changed()), m.width))
 	}
+	if m.settingsMode && m.set.naming {
+		in := m.set.input
+		in.Width = max(1, m.width-34)
+		return paint(fitANSI(p.text(p.accent).Bold(true).Render(" 新角色名 ")+in.View()+p.text(p.faint).Render("  enter 确定  esc 取消"), m.width), p.text(p.ink).Background(p.bar), m.width)
+	}
 	pairs := [][2]string{{"↑↓", "选择"}, {"tab/点击", "切焦点"}, {"1-4", "标签"}, {"[ ]", "比例"}, {"z", "专注"}, {"e", "展开"}, {"c", "取消"}, {"x", "导出"}, {"s", "设置"}, {"q", "退出"}}
 	right := fmt.Sprintf("列表 %d%% · 详情 %d%%", m.ratio, 100-m.ratio)
 	if m.settingsMode {
-		pairs = [][2]string{{"↑↓", "选择"}, {"←→", "切换"}, {"enter", "输入"}, {"d", "默认"}, {"u", "撤销"}, {"ctrl+s", "保存"}, {"esc", "返回"}}
+		pairs = [][2]string{{"↑↓", "选择"}, {"←→", "切换"}, {"enter", "输入"}, {"d", "默认"}, {"u", "撤销"}, {"n", "新角色"}, {"ctrl+s", "保存"}, {"esc", "返回"}}
 		if m.set.editing {
 			pairs = [][2]string{{"enter", "确定"}, {"esc", "取消"}}
 		}

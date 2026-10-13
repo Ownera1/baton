@@ -8,7 +8,10 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,20 +22,35 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// settings edits the user's config.json in place of the task list; s toggles it.
-// The draft outlives leaving the mode, so unsaved edits are never dropped silently.
+// settings edits the user's config.json and roles in place of the task list;
+// s toggles it. The draft outlives leaving the mode, so unsaved edits are
+// never dropped silently.
 type settings struct {
 	loaded       bool
 	path         string
 	raw          []byte // the file as loaded, nil when missing; SaveConfig refuses if it changed
 	err          error  // load error; fields are read-only until r reloads
-	saved, draft app.Config
+	saved, draft values
+	fields       []field // the config fields, then each role's
 	exe          map[string]executable
 	cursor       int
 	editing      bool
+	naming       bool // the input is a new role's name
 	input        textinput.Model
 	quit         bool   // q pressed with unsaved changes; a second q quits
 	shownTheme   string // the theme value the panel last applied, to preview edits live
+}
+
+// values is what the fields edit: config.json and the roles visible from the
+// working directory, by name.
+type values struct {
+	app.Config
+	Roles map[string]app.Role
+}
+
+// roleAgent is the agent a role runs on.
+func (v values) roleAgent(name string) string {
+	return cmp.Or(v.Roles[name].Agent, v.DefaultAgent())
 }
 
 type executable struct {
@@ -40,15 +58,15 @@ type executable struct {
 	err  error
 }
 
-// field is one config value. Fields with options cycle with ←/→; every field
-// accepts typed input. "" means the default.
+// field is one config or role value. Fields with options cycle with ←/→;
+// every field accepts typed input. "" means the default.
 type field struct {
-	agent, key string // agent is empty for global fields
-	label      string // shorter list label than key, which the title and file use
-	group      string // list heading when not an agent's; default 全局
-	options    []string
-	get        func(app.Config) string
-	set        func(*app.Config, string)
+	agent, role, key string // both empty for global fields
+	label            string // shorter list label than key, which the title and file use
+	group            string // list heading when not an agent's; default 全局
+	options          []string
+	get              func(values) string
+	set              func(*values, string) // nil for a role's file, which opens in an editor
 }
 
 // Levels listed by each CLI's --help; grok lists none.
@@ -59,19 +77,19 @@ var efforts = map[string][]string{
 	"pi":     {"off", "minimal", "low", "medium", "high", "xhigh", "max"},
 }
 
-var fields = settingsFields()
+var configFields = settingsFields()
 
 func settingsFields() []field {
 	fs := []field{
 		{key: "agent", options: append([]string{""}, app.Agents...),
-			get: func(c app.Config) string { return c.Agent }, set: func(c *app.Config, v string) { c.Agent = v }},
+			get: func(c values) string { return c.Agent }, set: func(c *values, v string) { c.Agent = v }},
 		{key: "timeout", options: []string{"", "30m", "1h", "2h", "4h"},
-			get: func(c app.Config) string { return c.Timeout }, set: func(c *app.Config, v string) { c.Timeout = v }},
+			get: func(c values) string { return c.Timeout }, set: func(c *values, v string) { c.Timeout = v }},
 		{key: "max_parallel", label: "parallel", options: []string{"", "1", "2", "4", "8"},
-			get: func(c app.Config) string {
+			get: func(c values) string {
 				return map[bool]string{true: strconv.Itoa(c.MaxParallel)}[c.MaxParallel != 0]
 			},
-			set: func(c *app.Config, v string) {
+			set: func(c *values, v string) {
 				n, err := strconv.Atoi(v)
 				if err != nil && v != "" {
 					n = -1 // Validate rejects it, so a typo is flagged instead of dropped
@@ -79,10 +97,10 @@ func settingsFields() []field {
 				c.MaxParallel = n
 			}},
 		{group: "面板", key: "theme", options: []string{"", "light", "dark"},
-			get: func(c app.Config) string { return c.Theme }, set: func(c *app.Config, v string) { c.Theme = v }},
+			get: func(c values) string { return c.Theme }, set: func(c *values, v string) { c.Theme = v }},
 	}
 	for _, name := range app.Agents {
-		update := func(c *app.Config, edit func(*app.AgentConfig)) {
+		update := func(c *values, edit func(*app.AgentConfig)) {
 			a := c.Agents[name]
 			edit(&a)
 			// Copy on write: saved and draft may share the map.
@@ -97,35 +115,112 @@ func settingsFields() []field {
 				options = append([]string{""}, options...)
 			}
 			return field{agent: name, key: key, options: options,
-				get: func(c app.Config) string { a := c.Agents[name]; return *p(&a) },
-				set: func(c *app.Config, v string) { update(c, func(a *app.AgentConfig) { *p(a) = v }) }}
+				get: func(c values) string { a := c.Agents[name]; return *p(&a) },
+				set: func(c *values, v string) { update(c, func(a *app.AgentConfig) { *p(a) = v }) }}
 		}
 		fs = append(fs,
 			one("model", nil, func(a *app.AgentConfig) *string { return &a.Model }),
 			one("effort", efforts[name], func(a *app.AgentConfig) *string { return &a.Effort }),
 			one("path", nil, func(a *app.AgentConfig) *string { return &a.Path }),
 			field{agent: name, key: "hidden", options: []string{"", "true"},
-				get: func(c app.Config) string { return map[bool]string{true: "true"}[c.Agents[name].Hidden] },
-				set: func(c *app.Config, v string) { update(c, func(a *app.AgentConfig) { a.Hidden = v == "true" }) }})
+				get: func(c values) string { return map[bool]string{true: "true"}[c.Agents[name].Hidden] },
+				set: func(c *values, v string) { update(c, func(a *app.AgentConfig) { a.Hidden = v == "true" }) }})
 	}
 	return fs
 }
 
-// check reuses Config.Validate on a config holding only this value.
+// roleFields edit each role's front matter, then open its file in an editor;
+// a role whose file is broken only has the file.
+func roleFields(d values, global string) []field {
+	var fs []field
+	for _, name := range slices.Sorted(maps.Keys(d.Roles)) {
+		group := "角色 " + name
+		if filepath.Dir(d.Roles[name].Path) != global {
+			group += " · 仓库"
+		}
+		file := field{role: name, key: "file", group: group, get: func(v values) string { return v.Roles[name].Path }}
+		if d.Roles[name].Err != nil {
+			fs = append(fs, file)
+			continue
+		}
+		update := func(v *values, edit func(*app.Role)) {
+			r := v.Roles[name]
+			edit(&r)
+			v.Roles = maps.Clone(v.Roles) // copy on write, as for agents
+			if v.Roles == nil {
+				v.Roles = map[string]app.Role{}
+			}
+			v.Roles[name] = r
+		}
+		one := func(key, label string, options []string, p func(*app.Role) *string) field {
+			return field{role: name, key: key, label: label, group: group, options: options,
+				get: func(v values) string { r := v.Roles[name]; return *p(&r) },
+				set: func(v *values, s string) { update(v, func(r *app.Role) { *p(r) = s }) }}
+		}
+		fs = append(fs,
+			one("description", "desc", nil, func(r *app.Role) *string { return &r.Description }),
+			one("agent", "", append([]string{""}, app.Agents...), func(r *app.Role) *string { return &r.Agent }),
+			one("model", "", nil, func(r *app.Role) *string { return &r.Model }),
+			one("effort", "", nil, func(r *app.Role) *string { return &r.Effort }),
+			one("mode", "", []string{"", "read", "write"}, func(r *app.Role) *string { return &r.Mode }),
+			field{role: name, key: "hidden", group: group, options: []string{"", "true"},
+				get: func(v values) string { return map[bool]string{true: "true"}[v.Roles[name].Hidden] },
+				set: func(v *values, s string) { update(v, func(r *app.Role) { r.Hidden = s == "true" }) }},
+			file)
+	}
+	return fs
+}
+
+// choices are the values ←/→ cycle through; a role's effort follows its agent.
+func (f field) choices(d values) []string {
+	if f.role != "" && f.key == "effort" && efforts[d.roleAgent(f.role)] != nil {
+		return append([]string{""}, efforts[d.roleAgent(f.role)]...)
+	}
+	return f.options
+}
+
+// check reuses Config.Validate on a config holding only this value, and
+// Role.Set for a role's.
 func (f field) check(v string) error {
-	var c app.Config
+	if f.role != "" {
+		if f.set == nil {
+			return nil
+		}
+		r := app.Role{Name: f.role}
+		return r.Set(f.key, v)
+	}
+	var c values
 	f.set(&c, v)
 	return c.Validate()
 }
 
 func (f field) title() string {
-	if f.agent == "" {
-		return f.key
+	switch {
+	case f.role != "":
+		return "角色 " + f.role + " · " + f.key
+	case f.agent != "":
+		return f.agent + " · " + f.key
 	}
-	return f.agent + " · " + f.key
+	return f.key
 }
 
-func (f field) help() string {
+func (f field) help(d values) string {
+	if f.role != "" {
+		agent := d.roleAgent(f.role)
+		switch f.key {
+		case "description":
+			return "必填。主 Agent 靠它挑角色：写清楚这个角色做什么、该用读还是写派、任务里要写什么。"
+		case "agent":
+			return "角色跑在哪个 Agent 上，留空时用全局 agent（现在是 " + d.DefaultAgent() + "）。"
+		case "model", "effort":
+			return fmt.Sprintf("传给 %s 的 %s。命令行 -%s 优先；留空时用 %s 的 %s 设置。", agent, f.key, f.key, agent, f.key)
+		case "mode":
+			return "read 只能派只读任务，write 只能派写任务；留空两种都行，没指定时按写任务。"
+		case "hidden":
+			return "true 时主 Agent 看不到这个角色：baton_agents 不列出，MCP 拒绝派给它。你在终端里用 CLI 不受影响。"
+		}
+		return "角色文件。enter 用 $VISUAL 或 $EDITOR（默认 vi）打开，改正文：第 1 轮放在任务前面的说明。编辑器退出后重新读取。新角色先 ctrl+s 保存。"
+	}
 	switch f.key {
 	case "agent":
 		return "baton do、ask 和 MCP 没指定 Agent 时用哪个。环境变量 BATON_AGENT 优先于这里。"
@@ -150,11 +245,48 @@ func (f field) help() string {
 
 func (s *settings) load() {
 	cfg, path, raw, err := app.LoadConfig()
-	s.loaded, s.path, s.raw, s.err = true, path, raw, err
+	s.loaded, s.path, s.raw, s.err, s.fields = true, path, raw, err, configFields
 	if err == nil {
-		s.saved, s.draft = cfg, cfg
+		roles := map[string]app.Role{}
+		for _, r := range app.Roles(".") {
+			roles[r.Name] = r
+		}
+		s.saved = values{cfg, roles}
+		s.draft = s.saved
+		s.refields()
 	}
+	s.cursor = min(s.cursor, len(s.fields)-1)
 	s.resolve()
+}
+
+// refields rebuilds the role fields after roles were added, dropped or reread.
+func (s *settings) refields() {
+	s.fields = append(slices.Clone(configFields), roleFields(s.draft, filepath.Join(filepath.Dir(s.path), "agents"))...)
+}
+
+// fieldAt is the index of a role's field, or -1.
+func (s settings) fieldAt(role, key string) int {
+	return slices.IndexFunc(s.fields, func(f field) bool { return f.role == role && f.key == key })
+}
+
+// reloadRole rereads one role after the editor, keeping the other drafts.
+func (s *settings) reloadRole(name string) {
+	for _, v := range []*values{&s.saved, &s.draft} {
+		v.Roles = maps.Clone(v.Roles)
+		delete(v.Roles, name)
+	}
+	for _, r := range app.Roles(".") {
+		if r.Name == name {
+			s.saved.Roles[name], s.draft.Roles[name] = r, r
+		}
+	}
+	s.refields()
+	s.cursor = max(0, s.fieldAt(name, "file"))
+}
+
+// roleSet is a role's changed front matter, as SaveRole takes it.
+func (s settings) roleSet(name string) [][2]string {
+	return slices.DeleteFunc(s.pending()[name], func(kv [2]string) bool { return kv[0] == "file" })
 }
 
 // resolve looks up each agent's executable once per change instead of per frame.
@@ -170,14 +302,63 @@ func (s *settings) resolve() {
 	}
 }
 
-func (s settings) changed() int {
-	n := 0
-	for _, f := range fields {
-		if f.get(s.draft) != f.get(s.saved) {
-			n++
+// pending is the changed values by owner: "" for config.json, else a role.
+// A new role's file counts, so an unsaved role is never dropped silently.
+func (s settings) pending() map[string][][2]string {
+	out := map[string][][2]string{}
+	for _, f := range s.fields {
+		if v := f.get(s.draft); v != f.get(s.saved) {
+			out[f.role] = append(out[f.role], [2]string{f.key, v})
 		}
 	}
+	return out
+}
+
+func (s settings) changed() int {
+	n := 0
+	for _, kv := range s.pending() {
+		n += len(kv)
+	}
 	return n
+}
+
+type editedMsg struct {
+	name string
+	err  error
+}
+
+// editRole opens a saved role's file in $VISUAL or $EDITOR, vi by default.
+func (m *model) editRole(name string) tea.Cmd {
+	r, ok := m.set.saved.Roles[name]
+	if !ok || m.set.pending()[name] != nil {
+		m.flash("先 ctrl+s 保存这个角色，再打开文件")
+		return nil
+	}
+	editor := strings.Fields(cmp.Or(os.Getenv("VISUAL"), os.Getenv("EDITOR"), "vi"))
+	if len(editor) == 0 {
+		editor = []string{"vi"}
+	}
+	return tea.ExecProcess(exec.Command(editor[0], append(editor[1:], r.Path)...), func(err error) tea.Msg { return editedMsg{name, err} })
+}
+
+// addRole adds a global role to the draft; ctrl+s creates its file.
+func (m *model) addRole(name string) error {
+	s := &m.set
+	if err := app.CheckRoleName(name); err != nil {
+		return err
+	}
+	if _, ok := s.draft.Roles[name]; ok {
+		return fmt.Errorf("已有角色 %s", name)
+	}
+	s.draft.Roles = maps.Clone(s.draft.Roles)
+	if s.draft.Roles == nil {
+		s.draft.Roles = map[string]app.Role{}
+	}
+	s.draft.Roles[name] = app.Role{Name: name, Path: filepath.Join(filepath.Dir(s.path), "agents", name+".md")}
+	s.refields()
+	s.cursor = s.fieldAt(name, "description")
+	m.flash("填好 description 后 ctrl+s 保存；在 file 一项按 d 放弃")
+	return nil
 }
 
 func (m model) enterSettings() model {
@@ -203,17 +384,25 @@ func (m model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	if s.editing {
-		f := fields[s.cursor]
+		f := s.fields[s.cursor]
 		switch key {
 		case "enter":
-			f.set(&s.draft, strings.TrimSpace(s.input.Value()))
-			s.editing = false
+			v := strings.TrimSpace(s.input.Value())
+			if s.naming {
+				if err := m.addRole(v); err != nil {
+					m.flash("✗ " + err.Error())
+					return m, nil
+				}
+			} else {
+				f.set(&s.draft, v)
+			}
+			s.editing, s.naming = false, false
 			if f.key == "path" {
 				s.resolve()
 			}
 			m.previewTheme()
 		case "esc":
-			s.editing = false
+			s.editing, s.naming = false, false
 		default:
 			var cmd tea.Cmd
 			s.input, cmd = s.input.Update(msg)
@@ -233,32 +422,52 @@ func (m model) settingsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if s.err != nil && key != "r" && key != "esc" && key != "s" && key != "q" {
 		return m, nil
 	}
-	f := fields[s.cursor]
+	f := s.fields[s.cursor]
 	switch key {
 	case "up", "k":
 		m.moveField(-1)
 	case "down", "j":
 		m.moveField(1)
 	case "left", "h", "right", "l":
-		if f.options == nil {
+		options := f.choices(s.draft)
+		if f.set == nil {
+			m.flash("这一项按 enter 用编辑器打开")
+			break
+		}
+		if options == nil {
 			m.flash("这一项按 enter 输入")
 			break
 		}
-		i := max(0, indexOf(f.options, f.get(s.draft)))
+		i := max(0, indexOf(options, f.get(s.draft)))
 		step := 1
 		if key == "left" || key == "h" {
-			step = len(f.options) - 1
+			step = len(options) - 1
 		}
-		f.set(&s.draft, f.options[(i+step)%len(f.options)])
-	case "enter":
-		s.editing = true
+		f.set(&s.draft, options[(i+step)%len(options)])
+	case "enter", "n":
+		if key == "enter" && f.set == nil {
+			return m, m.editRole(f.role)
+		}
+		s.editing, s.naming = true, key == "n"
 		s.input = textinput.New()
 		s.input.Prompt = ""
 		s.input.Cursor.SetMode(cursor.CursorStatic)
-		s.input.SetValue(f.get(s.draft))
+		if !s.naming {
+			s.input.SetValue(f.get(s.draft))
+		}
 		s.input.CursorEnd()
 		s.input.Focus()
 	case "d", "u":
+		if f.set == nil {
+			// Only a new role's file differs; dropping it drops the role.
+			if _, saved := s.saved.Roles[f.role]; !saved {
+				s.draft.Roles = maps.Clone(s.draft.Roles)
+				delete(s.draft.Roles, f.role)
+				s.refields()
+				s.cursor = min(s.cursor, len(s.fields)-1)
+			}
+			break
+		}
 		v := ""
 		if key == "u" {
 			v = f.get(s.saved)
@@ -312,32 +521,50 @@ func (m *model) previewTheme() {
 
 func (m *model) moveField(d int) {
 	if m.set.err == nil && !m.set.editing {
-		m.set.cursor = max(0, min(len(fields)-1, m.set.cursor+d))
+		m.set.cursor = max(0, min(len(m.set.fields)-1, m.set.cursor+d))
 		m.viewport.GotoTop()
 	}
 }
 
+// save writes config.json and each changed role file, stopping at the first
+// failure; what was written stays saved.
 func (m *model) save() {
 	s := &m.set
-	if s.changed() == 0 {
+	pending := s.pending()
+	if len(pending) == 0 {
 		m.flash("没有改动")
 		return
 	}
-	for i, f := range fields {
+	for i, f := range s.fields {
 		if f.check(f.get(s.draft)) != nil {
 			s.cursor = i
 			m.flash("✗ 这一项有误，改正后再保存")
 			return
 		}
 	}
-	raw, err := app.SaveConfig(s.draft, s.raw)
+	var err error
+	if pending[""] != nil {
+		var raw []byte
+		if raw, err = app.SaveConfig(s.draft.Config, s.raw); err == nil {
+			s.raw, s.saved.Config = raw, s.draft.Config
+		}
+	}
+	for _, name := range slices.Sorted(maps.Keys(pending)) {
+		if name == "" || err != nil {
+			continue
+		}
+		r := s.draft.Roles[name]
+		if r.Raw, err = app.SaveRole(r.Path, s.saved.Roles[name].Raw, s.roleSet(name)); err == nil {
+			s.saved.Roles = maps.Clone(s.saved.Roles)
+			s.saved.Roles[name] = r
+		}
+	}
 	switch {
 	case errors.Is(err, app.ErrConfigChanged):
 		m.flash("✗ 文件已在外部修改；按 r 重新读取（放弃未保存的改动）")
 	case err != nil:
 		m.flash("✗ 保存失败: " + err.Error())
 	default:
-		s.raw, s.saved = raw, s.draft
 		m.flash("✓ 已保存 · 下次派活生效，已有对话不变")
 	}
 }
@@ -364,7 +591,7 @@ func (m model) settingsLines(w int) ([]string, []int, int) {
 		return lines, owners, 0
 	}
 	selected, group := 0, "-"
-	for i, f := range fields {
+	for i, f := range s.fields {
 		if g := cmp.Or(f.agent, f.group, "全局"); g != group {
 			group = g
 			lines, owners = append(lines, p.text(p.faint).Render(fit(" "+strings.ToUpper(g), w))), append(owners, -1)
@@ -376,11 +603,11 @@ func (m model) settingsLines(w int) ([]string, []int, int) {
 		}
 		v := f.get(s.draft)
 		val := m.fieldValue(f, v)
-		if i == s.cursor && s.editing {
+		if i == s.cursor && s.editing && !s.naming {
 			in := s.input
 			in.Width = max(1, w-16)
 			val = in.View()
-		} else if i == s.cursor && f.options != nil {
+		} else if i == s.cursor && f.choices(s.draft) != nil {
 			val = p.text(p.accent).Render("‹ ") + val + p.text(p.accent).Render(" ›")
 		}
 		err, warn := f.check(v), m.fieldWarn(f, v)
@@ -416,6 +643,9 @@ func (m model) fieldValue(f field, v string) string {
 		}
 		return p.text(p.faint).Render("默认（暴露给主 Agent）")
 	}
+	if f.role != "" {
+		return m.roleValue(f, v)
+	}
 	if v != "" {
 		return p.text(p.ink).Render(clean(v))
 	}
@@ -435,9 +665,43 @@ func (m model) fieldValue(f field, v string) string {
 	return p.text(p.faint).Render(clean(text))
 }
 
+// roleValue shows a role's value, or what an empty one falls back to.
+func (m model) roleValue(f field, v string) string {
+	p, d := m.palette, m.set.draft
+	r, agent := d.Roles[f.role], d.roleAgent(f.role)
+	_, saved := m.set.saved.Roles[f.role]
+	text := ""
+	switch {
+	case f.key == "file" && r.Err != nil:
+		text = "文件有误 · enter 编辑"
+	case f.key == "file" && !saved:
+		text = "新角色 · ctrl+s 创建文件"
+	case f.key == "file" && r.Prompt == "":
+		text = "正文为空 · enter 编辑"
+	case f.key == "file":
+		text = fmt.Sprintf("正文 %d 行 · enter 编辑", strings.Count(r.Prompt, "\n")+1)
+	case v != "":
+		return p.text(p.ink).Render(clean(v))
+	case f.key == "description":
+		text = "未填写"
+	case f.key == "agent":
+		text = "默认（" + agent + "）"
+	case f.key == "model":
+		text = "默认（" + cmp.Or(d.Agents[agent].Model, agent+" 自己的配置") + "）"
+	case f.key == "effort":
+		text = "默认（" + cmp.Or(d.Agents[agent].Effort, agent+" 自己的配置") + "）"
+	case f.key == "mode":
+		text = "默认（读写都可）"
+	}
+	return p.text(p.faint).Render(clean(text))
+}
+
 func (m model) fieldWarn(f field, v string) string {
 	if f.key == "path" && v != "" && m.set.exe[f.agent].err != nil {
 		return "未找到可执行文件"
+	}
+	if r := m.set.draft.Roles[f.role]; f.key == "file" && r.Err != nil {
+		return strings.TrimPrefix(r.Err.Error(), r.Path+": ")
 	}
 	return ""
 }
@@ -460,7 +724,7 @@ func (m model) settingsDetail(w int) string {
 	if s.err != nil {
 		return p.text(p.dim).Render("配置文件读取失败，见左栏。")
 	}
-	f := fields[s.cursor]
+	f := s.fields[s.cursor]
 	v, old := f.get(s.draft), f.get(s.saved)
 	label, color := "默认", p.off
 	if v != old {
@@ -469,20 +733,22 @@ func (m model) settingsDetail(w int) string {
 		label, color = "已设置", p.ok
 	}
 	pill := p.text(color).Background(p.code).Bold(true).Padding(0, 1).Render(label)
-	head := rightRow(p.text(p.ink).Bold(true).Render(f.title()), pill, max(1, w-1)) + "\n" + p.text(p.dim).Render(ansi.Wrap(f.help(), max(1, w-1), ""))
+	head := rightRow(p.text(p.ink).Bold(true).Render(f.title()), pill, max(1, w-1)) + "\n" + p.text(p.dim).Render(ansi.Wrap(f.help(s.draft), max(1, w-1), ""))
 	if f.key == "agent" && os.Getenv("BATON_AGENT") != "" {
 		head += "\n" + p.text(p.wait).Render(fit("当前 BATON_AGENT="+os.Getenv("BATON_AGENT")+"，这一项暂不生效", w-1))
 	}
 	if err := f.check(v); err != nil {
 		head += "\n" + p.text(p.bad).Render(ansi.Wrap("✗ "+clean(err.Error()), max(1, w-1), ""))
+	} else if warn := m.fieldWarn(f, v); warn != "" {
+		head += "\n" + p.text(p.wait).Render(ansi.Wrap("! "+clean(warn), max(1, w-1), ""))
 	}
 	lines := []string{p.box(head, color, max(1, w-1)), ""}
 	section := func(title, body string) {
 		lines = append(lines, p.text(p.faint).Render(title), body, "")
 	}
-	if f.options != nil {
+	if options := f.choices(s.draft); options != nil {
 		var chips []string
-		for _, o := range f.options {
+		for _, o := range options {
 			chip := p.text(p.dim).Background(p.code).Render(" " + cmp.Or(o, "默认") + " ")
 			if o == v {
 				chip = p.text(p.term).Background(p.accent).Bold(true).Render(" " + cmp.Or(o, "默认") + " ")
@@ -495,17 +761,29 @@ func (m model) settingsDetail(w int) string {
 		section("修改", p.text(p.faint).Strikethrough(true).Render(cmp.Or(clean(old), "默认"))+p.text(p.accent).Render(" → ")+
 			p.text(p.ink).Bold(true).Render(cmp.Or(clean(v), "默认"))+p.text(p.faint).Render("  u 撤销"))
 	}
-	if f.agent != "" {
-		section("命令预览（baton do，高亮为配置带来的参数）", m.preview(f.agent, w))
+	r := s.draft.Roles[f.role]
+	switch {
+	case f.agent != "":
+		section("命令预览（baton do，高亮为配置带来的参数）", m.preview(f.agent, "write", s.draft.Agents[f.agent], w))
+		section("保存后的 config.json", m.configPreview(w))
+	case f.role == "":
+		section("保存后的 config.json", m.configPreview(w))
+	case r.Err == nil:
+		name, a := s.draft.roleAgent(f.role), s.draft.Agents[s.draft.roleAgent(f.role)]
+		a.Model, a.Effort = cmp.Or(r.Model, a.Model), cmp.Or(r.Effort, a.Effort)
+		section("命令预览（baton do "+f.role+"，高亮为配置和角色带来的参数）", m.preview(name, cmp.Or(r.Mode, "write"), a, w))
+		section("保存后的 "+r.Path, m.rolePreview(f.role, w))
+		if f.key == "file" {
+			section("正文（第 1 轮放在任务前面）", p.text(p.ink).Render(ansi.Wrap(clean(cmp.Or(r.Prompt, "（空）")), max(1, w-1), "")))
+		}
 	}
-	section("保存后的 config.json", m.configPreview(w))
 	return strings.TrimSuffix(strings.Join(lines, "\n"), "\n")
 }
 
-// preview is the agent's real argv for a write turn, built by the agent package.
-func (m model) preview(name string, w int) string {
-	p, a := m.palette, m.set.draft.Agents[name]
-	args, _ := agent.Args(name, agent.Options{Mode: "write", Dir: "<worktree>", Prompt: "<任务>", LastFile: "<last>", Model: a.Model, Effort: a.Effort})
+// preview is the agent's real argv for a turn, built by the agent package.
+func (m model) preview(name, mode string, a app.AgentConfig, w int) string {
+	p := m.palette
+	args, _ := agent.Args(name, agent.Options{Mode: mode, Dir: "<worktree>", Prompt: "<任务>", LastFile: "<last>", Model: a.Model, Effort: a.Effort})
 	argv := append([]string{cmp.Or(m.set.exe[name].path, a.Path, name)}, args...)
 	hot := make([]bool, len(argv))
 	for i, arg := range argv {
@@ -538,7 +816,6 @@ var agentBlock = regexp.MustCompile(`^    "(\w+)": \{$`)
 // configPreview marks lines a save would add or change. Lines are keyed by
 // their agent block so equal lines under different agents still compare.
 func (m model) configPreview(w int) string {
-	p := m.palette
 	keyed := func(c app.Config) []string {
 		b, _ := c.Marshal()
 		block := ""
@@ -551,14 +828,37 @@ func (m model) configPreview(w int) string {
 		}
 		return out
 	}
-	old := map[string]bool{}
-	for _, k := range keyed(m.set.saved) {
-		old[k] = true
+	return m.added(keyed(m.set.saved.Config), keyed(m.set.draft.Config), w)
+}
+
+// rolePreview is the front matter a save would write, changed lines marked.
+func (m model) rolePreview(name string, w int) string {
+	keyed := func(b []byte) []string {
+		lines := strings.Split(string(b), "\n")
+		if end := slices.Index(lines[1:], "---"); end >= 0 {
+			lines = lines[:end+2]
+		}
+		for i := range lines {
+			lines[i] = "|" + lines[i]
+		}
+		return lines
+	}
+	old := m.set.saved.Roles[name].Raw
+	return m.added(keyed(old), keyed(app.RoleFile(old, m.set.roleSet(name))), w)
+}
+
+// added shows lines, marking those not in old; text before the first | is
+// a key that tells equal lines in different blocks apart.
+func (m model) added(old, lines []string, w int) string {
+	p := m.palette
+	seen := map[string]bool{}
+	for _, k := range old {
+		seen[k] = true
 	}
 	var out []string
-	for _, k := range keyed(m.set.draft) {
+	for _, k := range lines {
 		line, style := "  "+k[strings.IndexByte(k, '|')+1:], p.text(p.ink).Background(p.code)
-		if !old[k] {
+		if !seen[k] {
 			line, style = "+"+line[1:], style.Foreground(p.ok).Background(p.addBG)
 		}
 		out = append(out, style.Width(w).Render(fit(line, w)))

@@ -277,6 +277,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.noticeUntil = m.now.Add(3 * time.Second)
 		m.syncViewport()
 		return m, m.refresh()
+	case editedMsg:
+		m.set.reloadRole(msg.name)
+		m.flash("已重新读取角色 " + msg.name)
+		if msg.err != nil {
+			m.flash("✗ 编辑器: " + msg.err.Error())
+		}
 	case exportMsg:
 		if msg.err != nil {
 			m.notice = "导出失败: " + msg.err.Error()
