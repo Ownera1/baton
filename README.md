@@ -35,7 +35,7 @@ baton                                     # 打开面板（同 baton tui）
 | 仓库 | 当前目录所在的 git 仓库；`-repo` 指定其他仓库。MCP 默认取服务启动目录 |
 | 模型 / effort | 配置的 `agents.<名字>`，没有就用各 Agent 自己的配置；`-model`、`-effort` 只在需要时覆盖 |
 | 检查（仅改代码任务） | 依次查找 `.baton/checks`（一行一条命令，`#` 注释，空文件表示不检查）、`go.mod`（`go vet` + `go test`）、`Cargo.toml`（`cargo test`）、Makefile 的 `test` 目标。npm 项目不自动推断：worktree 里没有 `node_modules`，请写进 `.baton/checks`。`-check` 指定后不再推断，`-no-check` 跳过检查 |
-| 任务 | 不写就是最近一个；写完整 ID、唯一前缀或后缀都行 |
+| 任务 | 不写就是最近一个；写完整 ID、唯一前缀或后缀都行，至少 4 个字符 |
 | 超时 | 单轮 2 小时，包含 Agent 和检查时间；配置的 `timeout` 可改 |
 
 ### 配置
@@ -81,7 +81,7 @@ baton                                     # 打开面板（同 baton tui）
 
 ### 清理任务
 
-`baton clean [任务…]` 删除已结束的任务：每个任务连同它的 worktree、`baton/<id>` 分支和 `tasks/<id>/` 记录一起删，不会只删一部分。不写任务时扫描当前仓库（`-repo` 指定其他仓库，`-all` 扫描全部仓库）的已结束任务。写任务的分支须已合并进仓库当前分支才会删：是它的祖先、`git cherry` 能在当前分支找到它的每个提交（rebase 或 cherry-pick），或者它的 squash 副本能找到（squash 合并，思路来自 [git-delete-merged-branches](https://github.com/hartwork/git-delete-merged-branches)，未复制代码）；`-force` 连未合并的一起删。排队、运行中或 stale 的任务，以及仍有任务以它为 base 的任务都会保留；worktree 有未提交改动或未跟踪文件时 git 拒绝删除，这个任务也保留。命令先列出要删和保留的任务及占用空间，必须在终端里输入 `y` 才执行；没有终端（管道、Agent 的 shell）时只列出不删。面板里选中任务按 `d` 也按同样的规则删除单个任务，`y` 确认。
+`baton clean [任务…]` 删除已结束的任务：每个任务连同它的 worktree、`baton/<id>` 分支和 `tasks/<id>/` 记录一起删，不会只删一部分。不写任务时扫描当前仓库（`-repo` 指定其他仓库，`-all` 扫描全部仓库）的已结束任务。写任务的分支须已合并进仓库当前分支才会删：是它的祖先、`git cherry` 能在当前分支找到它的每个提交（rebase 或 cherry-pick），或者它的 squash 副本能找到（squash 合并，思路来自 [git-delete-merged-branches](https://github.com/hartwork/git-delete-merged-branches)，未复制代码）；`-force` 连未合并的一起删。排队、运行中或 stale 的任务，以及仍有任务以它为 base 的任务都会保留；worktree 有未提交改动或未跟踪文件时 git 拒绝删除，这个任务也保留。`task.json` 读不出来的任务在 `list` 里显示为失败，`-force` 才删，只删 `tasks/<id>/`，它的分支要自己删。命令先列出要删和保留的任务及占用空间，必须在终端里输入 `y` 才执行；没有终端（管道、Agent 的 shell）时只列出不删。面板里选中任务按 `d` 也按同样的规则删除单个任务，`y` 确认。
 
 MCP 的 `baton_clean`（`ids`、`repo`、`force`）给主 Agent 用同样的规则清理，但删除前一定由用户确认：Baton 通过 MCP elicitation 让客户端弹出同样的列表，用户勾选“删除以上任务”并接受后才删，拒绝时返回 `declined`。Claude Code（2026-07-28 协议，带着回答重新调用）和 Codex（2025-06-18 协议，调用中途询问）都支持；不支持 elicitation 的客户端会收到错误，任何东西都不删。确认期间任务列表变了会重新询问。
 
@@ -101,7 +101,7 @@ mode: read
 
 front matter 每行一个 `key: value`（值可加引号，`#` 开头为注释，空值即默认，不支持多行值和列表）：`description` 必填，主 Agent 靠它挑角色；`name` 可省略，写了须与文件名一致；`agent` 不写用默认 Agent；另有 `model`、`effort`、`mode`、`hidden`。未知字段直接报错，从 Claude Code 复制来的 `tools` 等字段要删掉。正文在第 1 轮放在任务前面，`reply` 不再重复；角色名和正文在派活时写入任务，之后改文件不影响已有对话。
 
-用法：`baton do tester 给分页补测试`、`baton ask reviewer 看看这次改动`，或 `-agent reviewer`；MCP 在 `agent` 里写角色名。命令行或 MCP 参数优先于角色。角色写了 `mode` 就只能以该模式运行（`baton do reviewer …` 报错），`run`/MCP 不写 `mode` 时取角色的值。`baton agents` 列出全部 Agent 和角色（含隐藏的和读取出错的），MCP 的 `baton_agents` 只列出未隐藏的。`hidden: true` 的角色对主 Agent 隐藏；角色可以使用被隐藏的 Agent，例如隐藏 `pi`，只暴露一个 `agent: pi`、`mode: read` 的角色。仓库级角色随仓库提交，克隆来的仓库也会带上，用之前先看一眼它的说明。
+用法：`baton do tester 给分页补测试`、`baton ask reviewer 看看这次改动`，或 `-agent reviewer`；MCP 在 `agent` 里写角色名。命令行或 MCP 参数优先于角色。角色写了 `mode` 就只能以该模式运行（`baton do reviewer …` 报错），`run`/MCP 不写 `mode` 时取角色的值。`baton agents` 列出全部 Agent 和角色（含隐藏的和读取出错的），MCP 的 `baton_agents` 只列出未隐藏的。`hidden: true` 的角色对主 Agent 隐藏；角色可以使用被隐藏的 Agent，例如隐藏 `pi`，只暴露一个 `agent: pi`、`mode: read` 的角色。仓库级角色随仓库提交，克隆来的仓库也会带上，用之前先看一眼它的说明；`baton_agents` 用 `repo: true` 标出它们。仓库级角色不能以写模式运行 pi（没有沙箱），信任它就复制到全局的 `agents/` 下。
 
 参数可以写在任意位置；任务文字以 `-` 开头时放在 `--` 之后。输出默认给人看，加 `-json` 输出结构化结果。`-w` 等待完成并打印结果，任务失败时退出码非零；Ctrl-C 只停止等待，任务继续。`baton run -agent … -repo … -task …` 等旧写法继续可用。
 
@@ -178,9 +178,9 @@ git merge baton/<a1 的 ID> baton/<b2 的 ID>                 → 主 Agent 用�
 
 数据默认保存在 `~/.local/share/baton`，可通过 `BATON_HOME` 修改。每个 `tasks/<id>/` 保存原子更新的 `task.json`、原样的 `turn-n.stdout/stderr`、Codex 的 `turn-n.last`、`patch.diff`、`checks/turn-n/`、`artifacts/` 和 `worker.log`。`request.json` 是启动/续接信箱，`lock` 串行保护同一任务，`worker.pid` 记录启动 PID，`cancel-n` 是取消标记；只有 worker 写 `task.json`。`cache/` 是 codex 写任务共用的 Go 构建缓存：沙箱不让写默认缓存，codex 会在 worktree 里建 `.cache/go-build`（几百 MB），被 Baton 的提交带进分支；现在 Baton 把它设为沙箱里唯一的额外可写目录，并通过 `shell_environment_policy.set.GOCACHE` 指过去（这会替换 codex 配置里的 `writable_roots`）。grok 写任务的 `--sandbox workspace` 同样不让写默认缓存，也不让写 `cache/`，只放行临时目录，所以它的 `GOCACHE` 设为 `$TMPDIR/baton-go-build`，grok 写任务之间共用。同一个 BATON_HOME 下的 `check-gate.lock` 跨进程串行运行所有检查，配置了 `max_parallel` 时 `slots/<n>.lock` 限制同时运行的轮数。
 
-安全边界：Baton 不 push、不切换用户分支、不传任何 bypass / skip-permissions / always-approve / danger-full-access 参数。子 Agent 不能再派活：worker 给 Agent 和检查设置 `BATON_DEPTH=1`，带着它的 `do`/`ask`/`run`/`reply`（含 MCP）直接报错；codex 启动 MCP 服务时不传父进程环境，所以还会沿父进程往上找 `baton _worker`（每级一次 `ps`），找到同样拒绝；仓库位于 `$BATON_HOME/tasks/` 下（任务 worktree）时也拒绝。worktree 隔离代码改动，Agent 仍沿用自身权限机制。**Pi write 没有沙箱**，结果中也会提示；用户提供的检查通过 `/bin/sh -c` 执行，同样没有安全沙箱。RSS 每秒采样，默认 3072 MB 上限，CPU 并行提示为 2（`memory_mb`、`cpus` 可改）、nice 为 10；这些限制不能约束主动脱离进程组的程序。应对所有实例使用同一 BATON_HOME 才能共享全机检查锁。
+安全边界：Baton 不 push、不切换用户分支、不传任何 bypass / skip-permissions / always-approve / danger-full-access 参数。子 Agent 不能再派活：worker 给 Agent 和检查设置 `BATON_DEPTH=1`，带着它的 `do`/`ask`/`run`/`reply`（含 MCP）直接报错；codex 启动 MCP 服务时不传父进程环境，所以还会沿父进程往上找 `baton _worker`（每级一次 `ps`），找到同样拒绝；仓库位于 `$BATON_HOME/tasks/` 下（任务 worktree）时也拒绝。worktree 隔离代码改动，Agent 仍沿用自身权限机制。**Pi write 没有沙箱**，结果中也会提示；检查通过 `/bin/sh -c` 在本机执行，没有沙箱，有网络，能读你的家目录；写任务的检查跑的是子 Agent 刚写的代码（例如它写的测试），等于你亲手运行了它。Agent 自身的沙箱拦不住这一步，所以别对不信任的仓库或任务开写模式检查（`-no-check` 或 MCP 的 `no_checks` 关掉）。RSS 每秒采样，默认 3072 MB 上限，CPU 并行提示为 2（`memory_mb`、`cpus` 可改）、nice 为 10；这些限制不能约束主动脱离进程组的程序。应对所有实例使用同一 BATON_HOME 才能共享全机检查锁。
 
-已知限制：仅支持 macOS/Linux；PID 存活检查无法识别 PID 复用，意外死亡报告 stale；SIGKILL 无法执行 worker 的清理逻辑，可能遗留子进程。read 使用 Agent 的只读模式，允许源仓库已有改动；它不是独立的 OS 沙箱。任务、分支和 worktree 保留供审阅，暂未提供清理命令。未提供成本的 Agent 保持成本未知，不估算；result 的顶层回复/用量/成本属于最近一轮，历轮记录在 turns。适配器通过真实输出样本和假 Agent 验证，本项目测试不调用真实服务。
+已知限制：仅支持 macOS/Linux；PID 存活检查无法识别 PID 复用，意外死亡报告 stale；SIGKILL 无法执行 worker 的清理逻辑，可能遗留子进程。read 使用 Agent 的只读模式，允许源仓库已有改动；它不是独立的 OS 沙箱。任务、分支和 worktree 保留供审阅，用 [`baton clean`](#清理任务) 清理。未提供成本的 Agent 保持成本未知，不估算；result 的顶层回复/用量/成本属于最近一轮，历轮记录在 turns。适配器通过真实输出样本和假 Agent 验证，本项目测试不调用真实服务。
 
 发布：`scripts/release.sh v0.1.1` 跑测试、打 tag、推送，并更新 `Ownera1/homebrew-tap` 的 `Formula/baton.rb`（从源码构建）。
 

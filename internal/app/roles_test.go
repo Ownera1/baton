@@ -75,6 +75,19 @@ func TestRolesOverrideAndErrors(t *testing.T) {
 	if _, err := FindRole(global, "broken"); err == nil || !strings.Contains(err.Error(), "unknown") {
 		t.Fatalf("repo role outside repo: %v", err)
 	}
+	// A cloned repository must not pick pi's unsandboxed write mode for itself.
+	write(filepath.Join(repo, ".baton", "agents"), "writer.md", "---\ndescription: d\nagent: pi\n---\n")
+	write(filepath.Join(global, "agents"), "mine.md", "---\ndescription: d\nagent: pi\nmode: write\n---\n")
+	if r, _ := FindRole(repo, "writer"); r == nil || !r.Repo {
+		t.Fatalf("repo role not marked: %+v", r)
+	}
+	if r, _ := FindRole(repo, "mine"); r == nil || r.Repo || r.unsandboxed("pi", "write") != nil {
+		t.Fatalf("global role: %+v", r)
+	}
+	s := &Service{Home: t.TempDir()}
+	if _, err := s.Run(RunRequest{Repo: repo, Agent: "writer", Task: "x"}); err == nil || !strings.Contains(err.Error(), "no sandbox") {
+		t.Fatalf("repo role ran pi write: %v", err)
+	}
 }
 
 func TestSaveRole(t *testing.T) {

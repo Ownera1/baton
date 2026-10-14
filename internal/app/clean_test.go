@@ -119,3 +119,31 @@ func TestClean(t *testing.T) {
 }
 
 func sorted(s []string) []string { s = slices.Clone(s); slices.Sort(s); return s }
+
+func TestUnreadableTask(t *testing.T) {
+	s := &Service{Home: t.TempDir()}
+	id := "20261013-000000-00000000bbbb0001"
+	dir := filepath.Join(s.Home, "tasks", id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "request.json"), []byte("{bad"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	list, err := s.List("")
+	if err != nil || len(list.Tasks) != 1 || !list.Tasks[0].Unreadable || list.Tasks[0].Status != "failed" || list.Tasks[0].CreatedAt.IsZero() {
+		t.Fatalf("one unreadable task must not break list: %+v %v", list, err)
+	}
+	plan, err := s.PlanClean(CleanRequest{IDs: []string{id}})
+	if err != nil || plan.Removable() != 0 {
+		t.Fatalf("unreadable task removed without force: %+v %v", plan, err)
+	}
+	plan, err = s.PlanClean(CleanRequest{IDs: []string{id}, Force: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Clean(plan)
+	if _, err := os.Stat(dir); !os.IsNotExist(err) || len(plan.Removed) != 1 {
+		t.Fatalf("forced clean must remove it: %+v %v", plan, err)
+	}
+}

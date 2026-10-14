@@ -135,11 +135,10 @@ func (s *Service) Worker(id string) (retErr error) {
 	if t.Mode == "write" {
 		runDir = t.Worktree
 		if req.Number == 1 {
+			// Run checked the source checkout; the worktree starts from BaseCommit,
+			// so edits made while the task was queued do not matter.
 			info, err := workspace.Inspect(t.Repo)
 			if err != nil {
-				return err
-			}
-			if err := workspace.RequireClean(info); err != nil && t.BaseTask == "" {
 				return err
 			}
 			if err := workspace.CreateWorktree(info, t.Worktree, t.Branch, t.BaseCommit); err != nil {

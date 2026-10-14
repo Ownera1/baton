@@ -23,6 +23,7 @@ type Role struct {
 	Effort      string
 	Mode        string // empty allows both; read or write refuses the other
 	Hidden      bool
+	Repo        bool // from the repository's .baton/agents, written by whoever wrote the repository
 	Prompt      string
 	Raw         []byte // the file as read, for SaveRole
 	Err         error  // the file cannot be used; the role is listed with this error
@@ -47,8 +48,8 @@ func CheckRoleName(name string) error {
 // repository's .baton/agents, which replaces global roles of the same name.
 func RoleDirs(dir string) []string {
 	var dirs []string
-	if path, err := ConfigPath(); err == nil {
-		dirs = append(dirs, filepath.Join(filepath.Dir(path), "agents"))
+	if d := globalRoleDir(); d != "" {
+		dirs = append(dirs, d)
 	}
 	if root, err := workspace.Git(dir, "rev-parse", "--show-toplevel"); err == nil {
 		dirs = append(dirs, filepath.Join(root, ".baton", "agents"))
@@ -56,9 +57,18 @@ func RoleDirs(dir string) []string {
 	return dirs
 }
 
+func globalRoleDir() string {
+	path, err := ConfigPath()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(path), "agents")
+}
+
 // Roles reads every role visible from dir, sorted by name.
 func Roles(dir string) []Role {
 	byName := map[string]Role{}
+	global := globalRoleDir()
 	for _, d := range RoleDirs(dir) {
 		paths, _ := filepath.Glob(filepath.Join(d, "*.md"))
 		for _, path := range paths {
@@ -73,6 +83,7 @@ func Roles(dir string) []Role {
 				}
 				r.Raw, r.Err = b, err
 			}
+			r.Repo = d != global
 			byName[name] = r
 		}
 	}
@@ -92,6 +103,15 @@ func FindRole(dir, name string) (*Role, error) {
 		}
 	}
 	return nil, fmt.Errorf("unknown agent or role %q: agents are %s; roles live in %s", name, strings.Join(Agents, ", "), strings.Join(RoleDirs(dir), " and "))
+}
+
+// unsandboxed refuses a repository role that would run pi in write mode,
+// which has no sandbox: a cloned repository must not pick that for itself.
+func (r *Role) unsandboxed(agent, mode string) error {
+	if r.Repo && agent == "pi" && mode == "write" {
+		return fmt.Errorf("role %s comes from the repository (%s) and cannot run pi in write mode, which has no sandbox; copy it to %s if you trust it", r.Name, r.Path, globalRoleDir())
+	}
+	return nil
 }
 
 // parseRole reads "---", one "key: value" per line, "---", then the body.

@@ -5,7 +5,6 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -104,19 +103,17 @@ func Parse(name string, stdout []byte, last string, exitCode int) Result {
 	return r
 }
 
+// jsonLines visits each line holding a JSON object. A stray warning or a
+// cut-off last line is skipped rather than losing the turn; the raw output
+// stays in turn-n.stdout.
 func jsonLines(b []byte, visit func(json.RawMessage) error) error {
-	d := json.NewDecoder(bytes.NewReader(b))
 	count := 0
-	for {
-		var raw json.RawMessage
-		err := d.Decode(&raw)
-		if err == io.EOF {
-			break
+	for _, line := range bytes.Split(b, []byte{'\n'}) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' || !json.Valid(line) {
+			continue
 		}
-		if err != nil {
-			return err
-		}
-		if err := visit(raw); err != nil {
+		if err := visit(line); err != nil {
 			return err
 		}
 		count++

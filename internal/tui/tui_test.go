@@ -218,11 +218,12 @@ func TestRefreshFileErrorsAndRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			m = refresh(m)
-			if !strings.Contains(m.View(), "Error:") || !strings.Contains(m.View(), "codex") {
-				t.Fatal("bad JSON must show an error and retain the previous list:", m.View())
+			// The unreadable task is listed as failed with its error; the list still loads.
+			if m.err != nil || !strings.Contains(m.View(), "cannot read task") {
+				t.Fatal("bad JSON must show the task's error:", m.View())
 			}
 			initial := refresh(newModel(svc))
-			if !strings.Contains(initial.View(), "Error:") {
+			if !strings.Contains(initial.View(), "cannot read task") {
 				t.Fatal("initial bad JSON must show an error:", initial.View())
 			}
 			writeTask(t, dir, task)

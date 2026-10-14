@@ -51,7 +51,12 @@ func TestParseFixtures(t *testing.T) {
 			if r := Parse(c.name, b, "", 3); !strings.Contains(r.Error, "code 3") {
 				t.Fatalf("nonzero exit: %+v", r)
 			}
-			for _, bad := range [][]byte{nil, []byte("not json"), []byte("{}"), append(append([]byte{}, b...), []byte("garbage")...)} {
+			// A stray warning line and a cut-off last record do not lose the turn.
+			noisy := append(append([]byte("npm WARN deprecated\n"), b...), []byte("\n{\"type\":")...)
+			if r := Parse(c.name, noisy, "", 0); r.Error != "" || r.SessionID != c.id || r.FinalText != c.text {
+				t.Fatalf("noisy output: %+v", r)
+			}
+			for _, bad := range [][]byte{nil, []byte("not json"), []byte("{}")} {
 				r := Parse(c.name, bad, "", 0)
 				if r.Error == "" || r.FinalText != "" {
 					t.Fatalf("malformed output must fail with empty reply: %+v", r)
@@ -184,5 +189,13 @@ func TestEnv(t *testing.T) {
 		if got := Env(o.name, Options{Mode: o.mode}); got != nil {
 			t.Errorf("%s %s: %q", o.name, o.mode, got)
 		}
+	}
+}
+
+func TestClaudeSessionWithoutResult(t *testing.T) {
+	// A turn stopped before its result event can still be resumed.
+	r := Parse("claude", []byte("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\"}\n{\"type\":\"assistant\",\"session_id\":\"s\"}\n"), "", -1)
+	if r.SessionID != "s" || r.Error == "" {
+		t.Fatalf("%+v", r)
 	}
 }

@@ -47,8 +47,10 @@ type Task struct {
 	Diffstat  string        `json:"diffstat"`
 	PatchPath string        `json:"patch_path"`
 	Warnings  []string      `json:"warnings,omitempty"`
-	CreatedAt time.Time     `json:"created_at"`
-	UpdatedAt time.Time     `json:"updated_at"`
+	// Unreadable marks a task List could not read; its one turn holds the error.
+	Unreadable bool      `json:"unreadable,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 type RunRequest struct {
