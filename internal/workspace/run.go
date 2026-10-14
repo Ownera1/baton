@@ -17,8 +17,7 @@ import (
 
 // RunOptions are the resource limits applied to one check command.
 type RunOptions struct {
-	Timeout   time.Duration
-	MaxOutput int
+	Timeout time.Duration
 	// Limits carries the CPU, memory and scheduling budget. When it is zero the
 	// defaults still apply: a check never gets the whole machine.
 	Limits guard.Limits
@@ -26,7 +25,8 @@ type RunOptions struct {
 	// termination path as a timeout, so children die with it.
 	Context context.Context
 	// Note receives one-line notices about limit enforcement, for the log.
-	Note   func(string)
+	Note func(string)
+	// Stdout and Stderr receive the command's output in full; nil discards it.
 	Stdout io.Writer
 	Stderr io.Writer
 }
@@ -38,7 +38,6 @@ type CommandResult struct {
 	ExitCode   int           `json:"exit_code"`
 	Duration   time.Duration `json:"-"`
 	DurationMS int64         `json:"duration_ms"`
-	Output     string        `json:"output"`
 	TimedOut   bool          `json:"timed_out"`
 	// Stopped is set when the tool ended the command itself, for any reason:
 	// timeout, memory ceiling or cancellation. A stopped command did not
@@ -94,18 +93,7 @@ func RunArgv(dir string, argv []string, stdin io.Reader, env []string, opts RunO
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin = stdin
 	cmd.Dir = dir
-	buf := safeBuffer{limit: 4 << 20}
-	if opts.MaxOutput > 0 {
-		buf.limit = opts.MaxOutput
-	}
-	cmd.Stdout = &buf
-	cmd.Stderr = &buf
-	if opts.Stdout != nil {
-		cmd.Stdout = opts.Stdout
-	}
-	if opts.Stderr != nil {
-		cmd.Stderr = opts.Stderr
-	}
+	cmd.Stdout, cmd.Stderr = opts.Stdout, opts.Stderr
 	// Preserve the caller's environment, then add noninteractive settings and
 	// resource hints. Limit variables go last so they win over inherited values.
 	cmd.Env = append(append([]string{}, env...), "CI=1", "GIT_TERMINAL_PROMPT=0", "NO_COLOR=1")
@@ -199,12 +187,6 @@ func RunArgv(dir string, argv []string, stdin io.Reader, env []string, opts RunO
 		}
 	}
 	res.PeakRSSKB = watch.peak()
-	out := buf.String()
-	if res.MemoryExceeded {
-		out += fmt.Sprintf("\n[stopped: the check reached %d MB, over its %d MB ceiling]\n",
-			res.PeakRSSKB/1024, limits.MemoryMB)
-	}
-	res.Output = truncateMiddle(out, opts.MaxOutput)
 	return res
 }
 
@@ -333,51 +315,4 @@ func applyLimitDefaults(l *guard.Limits) {
 	if l.CPUs <= 0 {
 		l.CPUs = guard.DefaultCPUs
 	}
-}
-
-func truncateMiddle(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	head := s[:max/2]
-	tail := s[len(s)-max/2:]
-	return head + "\n…[truncated]…\n" + tail
-}
-
-// safeBuffer collects output from the two streams exec.Cmd writes on separate
-// goroutines.
-type safeBuffer struct {
-	mu        sync.Mutex
-	buf       []byte
-	limit     int
-	truncated bool
-}
-
-func (b *safeBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	limit := b.limit
-	if limit <= 0 {
-		limit = 4 << 20
-	}
-	if len(b.buf)+len(p) <= limit {
-		b.buf = append(b.buf, p...)
-	} else {
-		b.truncated = true
-		head := limit / 2
-		tail := limit - head
-		combined := append(b.buf, p...)
-		b.buf = append(append([]byte{}, combined[:head]...), combined[len(combined)-tail:]...)
-	}
-	return len(p), nil
-}
-
-func (b *safeBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.truncated {
-		half := len(b.buf) / 2
-		return string(b.buf[:half]) + "\n[Baton output truncated]\n" + string(b.buf[half:])
-	}
-	return string(b.buf)
 }
