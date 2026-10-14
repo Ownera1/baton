@@ -41,6 +41,8 @@ type model struct {
 	width, height int
 	detail        bool
 	zoom, expand  bool
+	flip          map[foldKey]bool // folds a click turned the other way from expand
+	folds         map[int]foldKey  // detail content row → the fold line drawn there
 	dragging      bool
 	spinning      bool // a spinner tick is scheduled; only while a task runs
 	ratio, tab    int
@@ -79,6 +81,11 @@ type logSnapshot struct {
 	events []agent.Event
 	err    error
 }
+type foldKey struct {
+	id     string
+	turn   int
+	prompt bool // the long prompt's fold, not the tool calls'
+}
 type markdownKey struct {
 	kind, id, theme     string
 	turn, width, length int
@@ -110,7 +117,8 @@ type exportMsg struct {
 
 func newModel(svc *app.Service, themes ...string) model {
 	m := model{svc: svc, width: 120, height: 30, now: time.Now(), ratio: 38, darkTerminal: lipgloss.HasDarkBackground(),
-		viewport: viewport.New(1, 1), logs: map[logKey]logSnapshot{}, patches: map[string]fileSnapshot{}, markdown: map[markdownKey]string{}, render: renderMarkdown}
+		viewport: viewport.New(1, 1), logs: map[logKey]logSnapshot{}, patches: map[string]fileSnapshot{}, markdown: map[markdownKey]string{}, render: renderMarkdown,
+		flip: map[foldKey]bool{}, folds: map[int]foldKey{}}
 	m.useTheme(append(themes, "")[0])
 	var settings struct {
 		Ratio int `json:"ratio"`
@@ -402,6 +410,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.GotoTop()
 		case "e":
 			m.expand = !m.expand
+			clear(m.flip)
 		case "c":
 			if t := m.task(); t != nil && (t.Status == "queued" || t.Status == "running" || t.Status == "stale") {
 				m.cancelID, m.cancelTitle = t.ID, taskTitle(t)
@@ -503,6 +512,14 @@ func (m *model) click(pane byte, row, x int) tea.Cmd {
 			return nil
 		}
 		m.detail = true
+		if k, ok := m.folds[m.viewport.YOffset+row]; ok && row >= 0 {
+			m.flip[k] = !m.flip[k]
+			// Keep the clicked line in place rather than following the tail.
+			y := m.viewport.YOffset
+			m.syncViewport()
+			m.viewport.SetYOffset(y)
+			return nil
+		}
 		if row < 0 || m.viewport.YOffset+row != m.tabRow() {
 			return nil
 		}

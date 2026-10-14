@@ -213,6 +213,7 @@ func (m model) tabRow() int {
 }
 
 func (m model) details() string {
+	clear(m.folds)
 	if m.settingsMode {
 		return m.settingsDetail(max(1, m.viewport.Width))
 	}
@@ -234,7 +235,11 @@ func (m model) details() string {
 	lines = append(lines, strings.Join(tabNames, "  "), "")
 	switch m.tab {
 	case 0:
-		lines = append(lines, m.conversation(t, w))
+		text, folds := m.conversation(t, w)
+		for row, k := range folds {
+			m.folds[rows(lines)+row] = k
+		}
+		lines = append(lines, text)
 	case 1:
 		if len(t.Turns) > 0 {
 			entry := m.logs[logKey{t.ID, t.Turns[len(t.Turns)-1].Number}]
@@ -256,15 +261,21 @@ func (m model) details() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m model) conversation(t *app.Task, w int) string {
+// conversation also returns the row of each fold line, for clicks.
+func (m model) conversation(t *app.Task, w int) (string, map[int]foldKey) {
 	p := m.palette
 	var lines []string
+	folds := map[int]foldKey{}
 	for i, turn := range t.Turns {
 		clock := "排队中"
 		if turn.StartedAt != nil {
 			clock = turn.StartedAt.Local().Format("15:04")
 		}
-		lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("你 · 第 %d 轮 · %s", turn.Number, clock)), m.prompt(t.ID, turn, w), "")
+		prompt, long := m.prompt(t.ID, turn, w)
+		if long {
+			folds[rows(lines)+1+strings.Count(prompt, "\n")] = foldKey{t.ID, turn.Number, true}
+		}
+		lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("你 · 第 %d 轮 · %s", turn.Number, clock)), prompt, "")
 		entry := m.logs[logKey{t.ID, turn.Number}]
 		if entry.err != nil && !(i == len(t.Turns)-1 && t.Status == "running") {
 			lines = append(lines, p.text(p.bad).Render(ansi.Wrap("读取 stdout 失败: "+clean(entry.err.Error()), w, "")))
@@ -275,16 +286,19 @@ func (m model) conversation(t *app.Task, w int) string {
 				tools++
 			}
 		}
-		fold := p.text(p.faint).Render(fmt.Sprintf("⋯ %d 个工具调用 · e 展开", tools))
+		key := foldKey{id: t.ID, turn: turn.Number}
+		open := m.opened(key)
+		fold := p.text(p.faint).Render(fmt.Sprintf("▸ %d 个工具调用 · 点击展开", tools))
+		if open {
+			fold = p.text(p.faint).Render(fmt.Sprintf("▾ %d 个工具调用 · 点击收起", tools))
+		}
 		if i == len(t.Turns)-1 && t.Status == "running" {
 			lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("%s · 第 %d 轮", t.Who(), turn.Number))+p.text(p.run).Render(" · "+app.Glyph("running")+" 正在执行 "+elapsed(t, m.now)))
-			if m.expand {
-				lines = append(lines, m.eventRows(entry, w))
-			} else {
-				lines = append(lines, fold)
+			if !open {
 				entry.events = entry.events[max(0, len(entry.events)-4):]
-				lines = append(lines, m.eventRows(entry, w))
 			}
+			folds[rows(lines)] = key
+			lines = append(lines, fold, m.eventRows(entry, w))
 		} else if turn.StartedAt != nil {
 			checks := "检查结果未记录"
 			result := turn.Verify
@@ -300,10 +314,10 @@ func (m model) conversation(t *app.Task, w int) string {
 				}
 			}
 			lines = append(lines, p.text(p.ink).Bold(true).Render(fmt.Sprintf("%s · 第 %d 轮 · %s · %s", t.Who(), turn.Number, turnElapsed(turn, m.now), checks)))
-			if m.expand {
+			folds[rows(lines)] = key
+			lines = append(lines, fold)
+			if open {
 				lines = append(lines, m.eventRows(entry, w))
-			} else {
-				lines = append(lines, fold)
 			}
 			if turn.FinalText != "" {
 				lines = append(lines, m.reply(t.ID, turn, w))
@@ -317,8 +331,21 @@ func (m model) conversation(t *app.Task, w int) string {
 	if t.Status == "queued" {
 		lines = append(lines, p.text(p.wait).Render("◌ 等待开始…"))
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join(lines, "\n"), folds
 }
+
+// rows counts the rows lines take once joined with newlines.
+func rows(lines []string) int {
+	n := 0
+	for _, l := range lines {
+		n += strings.Count(l, "\n") + 1
+	}
+	return n
+}
+
+// opened reports whether a fold shows its content: e sets all, a click flips one.
+func (m model) opened(k foldKey) bool { return m.expand != m.flip[k] }
+
 func (m model) reply(id string, turn app.Turn, w int) string {
 	return m.markdownText("reply", id, turn.Number, turn.FinalText, w)
 }
@@ -326,14 +353,19 @@ func (m model) reply(id string, turn app.Turn, w int) string {
 // Long prompts (a whole task brief) fold so the replies stay in view.
 const promptLines = 12
 
-func (m model) prompt(id string, turn app.Turn, w int) string {
+// prompt reports long when the prompt ends in a fold line.
+func (m model) prompt(id string, turn app.Turn, w int) (text string, long bool) {
 	rendered := m.markdownText("prompt", id, turn.Number, turn.Prompt, w)
 	lines := strings.Split(rendered, "\n")
-	if m.expand || len(lines) <= promptLines {
-		return rendered
+	if len(lines) <= promptLines {
+		return rendered, false
 	}
-	more := m.palette.text(m.palette.faint).Render(fmt.Sprintf("  ⋯ 还有 %d 行 · e 展开", len(lines)-promptLines))
-	return strings.Join(append(lines[:promptLines:promptLines], more), "\n")
+	faint := m.palette.text(m.palette.faint)
+	if m.opened(foldKey{id, turn.Number, true}) {
+		return rendered + "\n" + faint.Render(fmt.Sprintf("  ▴ 共 %d 行 · 点击收起", len(lines))), true
+	}
+	more := faint.Render(fmt.Sprintf("  ▸ 还有 %d 行 · 点击展开", len(lines)-promptLines))
+	return strings.Join(append(lines[:promptLines:promptLines], more), "\n"), true
 }
 
 func (m model) markdownText(kind, id string, turn int, text string, w int) string {
