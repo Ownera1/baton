@@ -2,7 +2,6 @@ package app_test
 
 import (
 	"baton/internal/app"
-	"baton/internal/guard"
 	"baton/internal/workspace"
 	"bytes"
 	"context"
@@ -260,22 +259,31 @@ printf 'raw stderr\n' >&2
 	if task.Status != "failed" || task.Verify.Status != "unavailable" || task.Verify.Checks[0].ExitCode != 127 {
 		t.Fatalf("missing check: %+v", task)
 	}
-	gate, err := guard.NewGate(home)
-	if err != nil {
+	// Checks of different tasks run at the same time: each waits for the other's
+	// marker. The first also writes more output than any in-memory cap.
+	marks := filepath.Join(dir, "marks")
+	meet := func(me, other string) string {
+		return "touch " + marks + "/" + me + "; for i in $(seq 100); do test -f " + marks + "/" + other + " && exit 0; sleep 0.1; done; exit 1"
+	}
+	if err := os.Mkdir(marks, 0700); err != nil {
 		t.Fatal(err)
 	}
-	lease, err := gate.Acquire(context.Background(), "test holds the check gate", 0)
-	if err != nil {
-		t.Fatal(err)
+	var first, second app.Submitted
+	cli(&first, "run", "-agent", "codex", "-repo", repo, "-task", "parallel a", "-check", "seq 200000", "-check", meet("a", "b"), "-timeout", "30s")
+	cli(&second, "run", "-agent", "codex", "-repo", repo, "-task", "parallel b", "-check", meet("b", "a"), "-timeout", "30s")
+	for _, id := range []string{first.ID, second.ID} {
+		cli(&task, "wait", id, "-timeout", "30s", "-json")
+		if task.Verify.Status != "pass" {
+			t.Fatalf("parallel checks: %+v", task.Verify)
+		}
 	}
-	defer lease.Release()
-	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "blocked check", "-check", "test -f result.txt", "-timeout", "3s")
-	cli(&task, "wait", submitted.ID, "-timeout", "10s", "-json")
-	if task.Status != "failed" || task.Verify.Status != "unavailable" || len(task.Verify.Checks) != 1 || !strings.Contains(task.Verify.Checks[0].Reason, "wait for the machine") {
-		t.Fatalf("cross-process gate: %+v", task)
+	cli(&task, "status", first.ID, "-json")
+	seq := task.Verify.Checks[0]
+	if log, err := os.ReadFile(seq.LogPath); err != nil || !bytes.Contains(log, []byte("\n100000\n")) || !bytes.Contains(log, []byte("\n200000\n")) {
+		t.Fatalf("check log must keep the whole output: %v", err)
 	}
-	if err := lease.Release(); err != nil {
-		t.Fatal(err)
+	if !strings.HasSuffix(seq.OutputTail, "200000\n") || !strings.Contains(seq.OutputTail, "omitted") || len(seq.OutputTail) > 4100 {
+		t.Fatalf("output tail: %q", seq.OutputTail)
 	}
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-mode", "read", "-task", "read repo", "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")

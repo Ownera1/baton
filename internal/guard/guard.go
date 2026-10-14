@@ -15,13 +15,11 @@ import (
 	"time"
 )
 
-// One check at a time is enforced by Gate, across workers sharing BATON_HOME.
 const (
 	DefaultCPUs        = 2
 	DefaultNice        = 10
 	DefaultMemoryMB    = 3072
 	DefaultSampleEvery = time.Second
-	DefaultGateWait    = 2 * time.Minute
 )
 
 type Limits struct {
@@ -29,7 +27,6 @@ type Limits struct {
 	Nice        int           `json:"nice"`
 	MemoryMB    int           `json:"memory_mb"`
 	SampleEvery time.Duration `json:"-"`
-	GateWait    time.Duration `json:"gate_wait"`
 }
 
 // withDefaults returns a copy with every unset field filled in.
@@ -45,9 +42,6 @@ func (l Limits) withDefaults() Limits {
 	}
 	if l.SampleEvery <= 0 {
 		l.SampleEvery = DefaultSampleEvery
-	}
-	if l.GateWait <= 0 {
-		l.GateWait = DefaultGateWait
 	}
 	return l
 }

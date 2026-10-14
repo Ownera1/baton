@@ -7,7 +7,6 @@ package verify
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,7 +44,6 @@ type Outcome struct {
 	PeakRSSMB   float64 `json:"peak_rss_mb,omitempty"`
 	CPUQuota    int     `json:"cpu_quota,omitempty"`
 	Nice        int     `json:"nice,omitempty"`
-	GateWaitMS  int64   `json:"gate_wait_ms,omitempty"`
 	Stopped     bool    `json:"stopped,omitempty"`
 	ForceKilled bool    `json:"force_killed,omitempty"`
 }
@@ -73,19 +71,16 @@ type Input struct {
 // Options are the machine limits a verification round runs under.
 type Options struct {
 	Limits guard.Limits
-	// Gate serialises checks across every task on this machine. A nil gate runs
-	// them without coordination, which only makes sense in tests.
-	Gate *guard.Gate
 	// Context cancels the round; a cancelled check stops its process group.
 	Context context.Context
 	// Note receives resource-enforcement notices for the event stream.
 	Note func(string)
 }
 
-// Run executes every check in the worktree, one at a time and inside the
-// machine's budget. A required check that cannot run to completion (missing
-// tool, timeout, memory ceiling, no free slot) is recorded as unavailable,
-// which is explicitly not a pass.
+// Run executes every check in the worktree, one after another, each inside
+// its own budget; checks of different tasks run in parallel. A required check
+// that cannot run to completion (missing tool, timeout, memory ceiling) is
+// recorded as unavailable, which is explicitly not a pass.
 func Run(taskID string, round int, snapshotID, worktree, logDir string, checks []Input, defaultTimeout time.Duration, opts Options) (Result, error) {
 	res := Result{TaskID: taskID, Round: round, SnapshotID: snapshotID, StartedAt: time.Now().UTC(), Checks: []Outcome{}}
 	if err := os.MkdirAll(logDir, 0o755); err != nil {
@@ -140,31 +135,30 @@ func runOne(taskID string, round int, worktree, logDir string, c Input, defaultT
 		o.EndedAt = time.Now().UTC()
 		return o
 	}
-	// The machine is taken for one check at a time, across every task. Waiting
-	// is correct; failing because another task is running is not.
-	gateStart := time.Now()
-	lease, err := opts.Gate.Acquire(ctx, guard.Holder(taskID, round, c.ID), opts.Limits.GateWait)
+	// The whole output goes to the log; only its tail is kept in the result.
+	logPath := filepath.Join(logDir, fmt.Sprintf("check-%s.log", sanitize(c.ID)))
+	log, err := os.Create(logPath)
 	if err != nil {
-		o.Status = StatusUnavailable
-		if errors.Is(err, guard.ErrGateBusy) {
-			o.Reason = "the machine was still busy with another check after waiting: " + err.Error()
-		} else {
-			o.Reason = fmt.Sprintf("could not wait for the machine: %v", err)
-		}
+		o.Reason = "cannot save check log: " + err.Error()
 		o.EndedAt = time.Now().UTC()
 		return o
 	}
-	waited := time.Since(gateStart)
-	defer lease.Release()
-
+	defer log.Close()
+	header := fmt.Sprintf("$ %s\ncwd: %s\nstarted: %s\n\n", c.Command, cwd, o.StartedAt.Format(time.RFC3339))
+	if _, err := log.WriteString(header); err != nil {
+		o.Reason = "cannot save check log: " + err.Error()
+		o.EndedAt = time.Now().UTC()
+		return o
+	}
+	o.LogPath = logPath
 	cr := workspace.RunCommand(cwd, c.Command, workspace.RunOptions{
-		Timeout:   timeout,
-		MaxOutput: 64 * 1024,
-		Limits:    opts.Limits,
-		Context:   ctx,
-		Note:      opts.Note,
+		Timeout: timeout,
+		Limits:  opts.Limits,
+		Context: ctx,
+		Note:    opts.Note,
+		Stdout:  log,
+		Stderr:  log,
 	})
-	o.GateWaitMS = waited.Milliseconds()
 	o.PeakRSSMB = float64(cr.PeakRSSKB) / 1024
 	o.CPUQuota = opts.Limits.CPUs
 	o.Nice = opts.Limits.Nice
@@ -175,16 +169,9 @@ func runOne(taskID string, round int, worktree, logDir string, c Input, defaultT
 	o.EndedAt = time.Now().UTC()
 	o.TimedOut = cr.TimedOut
 	o.StartError = cr.StartErr
-	o.OutputTail = tail(cr.Output, 4000)
-
-	logPath := filepath.Join(logDir, fmt.Sprintf("check-%s.log", sanitize(c.ID)))
-	header := fmt.Sprintf("$ %s\ncwd: %s\nstarted: %s\nexit: %d timed_out: %v\n\n",
-		c.Command, cwd, o.StartedAt.Format(time.RFC3339), cr.ExitCode, cr.TimedOut)
-	if err := os.WriteFile(logPath, []byte(header+cr.Output), 0o644); err != nil {
-		o.Reason = "cannot save check log: " + err.Error()
-		return o
-	}
-	o.LogPath = logPath
+	output := fileTail(log, int64(len(header)), 4000)
+	o.OutputTail = output
+	fmt.Fprintf(log, "\nexit: %d timed_out: %v memory_exceeded: %v peak_rss_mb: %d\n", cr.ExitCode, cr.TimedOut, cr.MemoryExceeded, cr.PeakRSSKB/1024)
 
 	switch {
 	case cr.StartErr != "":
@@ -208,7 +195,7 @@ func runOne(taskID string, round int, worktree, logDir string, c Input, defaultT
 		// The shell could not run the program at all. A check that could not
 		// run is unknown, not failed, and unknown never counts as a pass.
 		o.Status = StatusUnavailable
-		o.Reason = fmt.Sprintf("command not runnable (exit %d): %s", cr.ExitCode, firstLine(cr.Output))
+		o.Reason = fmt.Sprintf("command not runnable (exit %d): %s", cr.ExitCode, firstLine(output))
 	default:
 		o.Status = StatusFail
 		o.Reason = fmt.Sprintf("exit code %d", cr.ExitCode)
@@ -248,11 +235,21 @@ func firstLine(s string) string {
 	return s
 }
 
-func tail(s string, n int) string {
-	if len(s) <= n {
-		return s
+// fileTail is the last n bytes f holds after offset from.
+func fileTail(f *os.File, from, n int64) string {
+	st, err := f.Stat()
+	if err != nil {
+		return ""
 	}
-	return "…[earlier output omitted]…\n" + s[len(s)-n:]
+	start := max(from, st.Size()-n)
+	b := make([]byte, st.Size()-start)
+	if _, err := f.ReadAt(b, start); err != nil {
+		return ""
+	}
+	if start > from {
+		return "…[earlier output omitted]…\n" + string(b)
+	}
+	return string(b)
 }
 
 func sanitize(s string) string {

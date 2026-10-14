@@ -12,14 +12,12 @@ import (
 	"time"
 )
 
-// ErrGateBusy means another check held the machine for longer than the caller
-// was willing to wait. The check has not run, and its result must not be
-// reported as a pass.
-var ErrGateBusy = errors.New("another check is already using the machine")
+// ErrGateBusy means the slot was held for longer than the caller was willing
+// to wait.
+var ErrGateBusy = errors.New("slot is held by another worker")
 
-// Gate serialises checks across every task on the machine. It is a file lock
-// rather than an in-process counter because workers are separate processes:
-// two tasks started from two terminals must not run checks at the same time.
+// Gate is one slot of max_parallel. It is a file lock rather than an
+// in-process counter because workers are separate processes.
 //
 // The lock is held by the kernel and the file descriptor, so a worker that is
 // killed releases it immediately. Nothing has to be cleaned up by hand.
@@ -27,19 +25,7 @@ type Gate struct {
 	path string
 }
 
-// NewGate prepares the gate for one installation. dir is the task data
-// directory, which lives outside any repository.
-func NewGate(dir string) (*Gate, error) {
-	if dir == "" {
-		return nil, fmt.Errorf("guard: a gate needs a directory")
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
-	return &Gate{path: filepath.Join(dir, "check-gate.lock")}, nil
-}
-
-// NewSlotGate is slot i of several, for limits above one such as max_parallel.
+// NewSlotGate is slot i of max_parallel.
 func NewSlotGate(dir string, i int) (*Gate, error) {
 	slots := filepath.Join(dir, "slots")
 	if err := os.MkdirAll(slots, 0o755); err != nil {
@@ -54,7 +40,7 @@ type Lease struct {
 	released bool
 }
 
-// Release gives the machine back. Closing the descriptor is enough on its own;
+// Release gives the slot back. Closing the descriptor is enough on its own;
 // the explicit unlock keeps the file usable for the next waiter.
 func (l *Lease) Release() error {
 	if l == nil || l.file == nil || l.released {
@@ -65,12 +51,8 @@ func (l *Lease) Release() error {
 	return l.file.Close()
 }
 
-// Acquire waits for the machine. A nil gate means no gate is configured, which
-// is only sensible in tests.
+// Acquire waits up to wait for the slot.
 func (g *Gate) Acquire(ctx context.Context, holder string, wait time.Duration) (*Lease, error) {
-	if g == nil {
-		return &Lease{}, nil
-	}
 	f, err := os.OpenFile(g.path, os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
@@ -101,7 +83,7 @@ func (g *Gate) Acquire(ctx context.Context, holder string, wait time.Duration) (
 	}
 }
 
-// readHolder reports who currently holds the machine, so a refusal is
+// readHolder reports who currently holds the slot, so a refusal is
 // actionable instead of mysterious.
 func readHolder(path string) string {
 	b, err := os.ReadFile(path)
@@ -112,10 +94,4 @@ func readHolder(path string) string {
 		return s
 	}
 	return "an unknown process"
-}
-
-// Holder is a short identifier for a check, used in the lock file so a
-// blocked check says who it is waiting for.
-func Holder(taskID string, round int, checkID string) string {
-	return fmt.Sprintf("%s/round-%d/%s", taskID, round, checkID)
 }

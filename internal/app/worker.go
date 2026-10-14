@@ -196,7 +196,7 @@ func (s *Service) Worker(id string) (retErr error) {
 	defer devnull.Close()
 	// A check waits for other tasks' checks as long as the turn may run; ctx
 	// bounds the wait, so a slow check elsewhere never fails this one.
-	limits := guard.Limits{CPUs: cmp.Or(req.CPUs, guard.DefaultCPUs), Nice: guard.DefaultNice, MemoryMB: cmp.Or(req.MemoryMB, guard.DefaultMemoryMB), GateWait: req.Timeout}
+	limits := guard.Limits{CPUs: cmp.Or(req.CPUs, guard.DefaultCPUs), Nice: guard.DefaultNice, MemoryMB: cmp.Or(req.MemoryMB, guard.DefaultMemoryMB)}
 	stdin := io.Reader(devnull)
 	if agent.PromptOnStdin(t.Agent) {
 		stdin = strings.NewReader(prefix + req.Prompt)
@@ -229,10 +229,6 @@ func (s *Service) Worker(id string) (retErr error) {
 			return err
 		}
 	}
-	gate, err := guard.NewGate(s.Home)
-	if err != nil {
-		return err
-	}
 	checks := make([]verify.Input, 0, len(t.Checks))
 	for i, cmd := range t.Checks {
 		checks = append(checks, verify.Input{ID: fmt.Sprint(i + 1), Command: cmd})
@@ -245,7 +241,7 @@ func (s *Service) Worker(id string) (retErr error) {
 		}
 	}
 	t.Verify, err = verify.Run(t.ID, req.Number, snapshot, runDir, filepath.Join(dir, "checks", fmt.Sprintf("turn-%d", req.Number)), checks,
-		req.Timeout, verify.Options{Context: ctx, Limits: limits, Gate: gate})
+		req.Timeout, verify.Options{Context: ctx, Limits: limits})
 	turn.Verify = &t.Verify
 	if err != nil {
 		return err
