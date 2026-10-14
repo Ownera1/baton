@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -26,24 +27,27 @@ func agyArgv(o Options) []string {
 
 func parseAgy(b []byte) (Result, error) {
 	var result json.RawMessage
+	session := "" // the init event carries it, so a turn cut off before its result can still be resumed
 	err := jsonLines(b, func(raw json.RawMessage) error {
 		var e struct {
-			Event  string
-			Result json.RawMessage
+			Event          string
+			ConversationID string `json:"conversation_id"`
+			Result         json.RawMessage
 		}
 		if err := json.Unmarshal(raw, &e); err != nil {
 			return err
 		}
+		session = cmp.Or(e.ConversationID, session)
 		if e.Event == "result" {
 			result = e.Result
 		}
 		return nil
 	})
 	if err != nil {
-		return Result{}, err
+		return Result{SessionID: session}, err
 	}
 	if result == nil {
-		return Result{}, fmt.Errorf("missing result")
+		return Result{SessionID: session}, fmt.Errorf("missing result")
 	}
 	return parseAgyResult(result)
 }

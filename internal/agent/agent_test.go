@@ -192,10 +192,15 @@ func TestEnv(t *testing.T) {
 	}
 }
 
-func TestClaudeSessionWithoutResult(t *testing.T) {
+func TestSessionWithoutResult(t *testing.T) {
 	// A turn stopped before its result event can still be resumed.
-	r := Parse("claude", []byte("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\"}\n{\"type\":\"assistant\",\"session_id\":\"s\"}\n"), "", -1)
-	if r.SessionID != "s" || r.Error == "" {
-		t.Fatalf("%+v", r)
+	for name, out := range map[string]string{
+		"claude": "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\"}\n{\"type\":\"assistant\",\"session_id\":\"s\"}\n",
+		// agy 1.3.4: the init event's top-level conversation_id.
+		"agy": "{\"event\":\"init\",\"conversation_id\":\"s\",\"init\":{\"cwd\":\"/repo\"}}\n{\"event\":\"step_update\",\"step_update\":{\"conversation_id\":\"s\",\"step_index\":0,\"state\":\"DONE\"}}\n",
+	} {
+		if r := Parse(name, []byte(out), "", -1); r.SessionID != "s" || r.Error == "" {
+			t.Fatalf("%s: %+v", name, r)
+		}
 	}
 }
