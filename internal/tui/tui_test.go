@@ -567,13 +567,31 @@ func TestConversationEventsDiffAndChecks(t *testing.T) {
 	m.logs[logKey{task.ID, 2}] = logSnapshot{events: []agent.Event{{Kind: "tool", Category: "command", Text: "go test", Right: "exit 1 · 0.3s"}}}
 	m.syncViewport()
 	plain := ansi.Strip(m.details())
-	for _, want := range []string{"你 · 第 1 轮", "你 · 第 2 轮", "codex · 第 1 轮 · 10s · 检查 1/1 通过", "第一轮回复", "第二轮回复", "⋯ 1 个工具调用 · e 展开"} {
+	for _, want := range []string{"你 · 第 1 轮", "你 · 第 2 轮", "codex · 第 1 轮 · 10s · 检查 1/1 通过", "第一轮回复", "第二轮回复", "▸ 1 个工具调用 · 点击展开"} {
 		if !strings.Contains(plain, want) {
 			t.Fatal("missing:", want, plain)
 		}
 	}
 	if strings.Contains(plain, "old.go") {
 		t.Fatal("tools should be folded")
+	}
+	clickFold := func(k foldKey) {
+		for row, at := range m.folds {
+			if at == k {
+				m.click('d', row-m.viewport.YOffset, 0)
+				m.syncViewport()
+				return
+			}
+		}
+		t.Fatal("no fold line for", k)
+	}
+	clickFold(foldKey{id: task.ID, turn: 1})
+	if plain = ansi.Strip(m.details()); !strings.Contains(plain, "old.go") || strings.Contains(plain, "exit 1 · 0.3s") {
+		t.Fatal("click should open turn 1 only:", plain)
+	}
+	clickFold(foldKey{id: task.ID, turn: 1})
+	if strings.Contains(ansi.Strip(m.details()), "old.go") {
+		t.Fatal("second click should fold turn 1")
 	}
 	m.expand = true
 	if !strings.Contains(m.details(), "old.go") {
@@ -690,12 +708,16 @@ func TestLongPromptFolds(t *testing.T) {
 	task.Turns[0].Prompt = strings.Repeat("一行\n\n", 30)
 	m := newModel(svc, "dark")
 	m.tasks = []*app.Task{task}
-	if got := m.prompt(task.ID, task.Turns[0], 60); !strings.Contains(got, "e 展开") {
+	if got, long := m.prompt(task.ID, task.Turns[0], 60); !long || !strings.Contains(got, "点击展开") {
 		t.Fatalf("long prompt not folded:\n%s", got)
 	}
+	m.flip[foldKey{task.ID, 1, true}] = true
+	if got, _ := m.prompt(task.ID, task.Turns[0], 60); !strings.Contains(got, "点击收起") {
+		t.Fatal("clicked prompt still folded")
+	}
 	m.expand = true
-	if got := m.prompt(task.ID, task.Turns[0], 60); strings.Contains(got, "e 展开") {
-		t.Fatal("expanded prompt still folded")
+	if got, _ := m.prompt(task.ID, task.Turns[0], 60); strings.Contains(got, "点击收起") {
+		t.Fatal("click should undo e for that prompt")
 	}
 }
 
