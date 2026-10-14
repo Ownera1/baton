@@ -2,3 +2,4 @@ bin/
 .cache/
 .codegraph/
 .DS_Store
+cover/

@@ -158,6 +158,13 @@ func (s *Service) Clean(plan *CleanPlan) {
 }
 
 func (s *Service) remove(id string) error {
+	// Reply holds this lock while it queues a turn, so a task is never removed
+	// between its check that the task is finished and the new turn.
+	f, err := lock(filepath.Join(s.Home, "tasks", id), true)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 	t, err := s.Status(id)
 	if err != nil {
 		// Only an unreadable task gets here, forced; its worktree lives in its directory.

@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -87,7 +86,7 @@ func TestReportedErrors(t *testing.T) {
 }
 
 func TestArgvModesAndResume(t *testing.T) {
-	o := Options{Mode: "read", Dir: "/repo path", Prompt: "task", Model: "model", Effort: "high", SessionID: "session", LastFile: "/turn.last"}
+	o := Options{Mode: "read", Dir: "/repo path", Model: "model", Effort: "high", SessionID: "session", LastFile: "/turn.last"}
 	cases := []struct {
 		name                string
 		build               func(Options) []string
@@ -155,9 +154,9 @@ func TestArgvModesAndResume(t *testing.T) {
 		t.Fatal(got)
 	}
 	o.Mode, o.Cache = "read", ""
-	// codex and claude read the prompt from stdin, so its size is not capped by argv.
-	if got := claudeArgv(o); !PromptOnStdin("codex") || !PromptOnStdin("claude") || slices.Contains(got, "task") {
-		t.Fatalf("prompt on argv: %v", got)
+	// agy reads one stream-json message; the others read the prompt as is.
+	if got := Stdin("agy", "a \"task\""); got != `{"event":"user","message":{"content":"a \"task\""}}`+"\n" || Stdin("pi", "task") != "task" {
+		t.Fatalf("stdin: %q", got)
 	}
 	if got, err := Argv("codex", Options{Path: "/bin/sh"}); err != nil || got[0] != "/bin/sh" {
 		t.Fatalf("configured path: %v %v", got, err)

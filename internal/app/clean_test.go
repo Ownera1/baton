@@ -142,6 +142,17 @@ func TestUnreadableTask(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A reply holding the task's lock keeps it.
+	held, err := lock(dir, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Clean(plan)
+	if len(plan.Removed) != 0 || !strings.Contains(plan.Tasks[0].Error, "busy") {
+		t.Fatalf("removed a locked task: %+v", plan)
+	}
+	held.Close()
+	plan.Tasks[0].Error = ""
 	s.Clean(plan)
 	if _, err := os.Stat(dir); !os.IsNotExist(err) || len(plan.Removed) != 1 {
 		t.Fatalf("forced clean must remove it: %+v %v", plan, err)

@@ -7,6 +7,17 @@ case $tag in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "bad tag: $tag" >&2; exit 2 ;; es
 test -z "$(git status --porcelain)" || { echo "working tree not clean" >&2; exit 1; }
 test "$(git branch --show-current)" = main || { echo "release from main" >&2; exit 1; }
 
+# Release only a commit CI has passed on: main as pushed, typically a merge.
+git fetch -q origin main
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" || { echo "main differs from origin/main" >&2; exit 1; }
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  run=$(gh run list --commit "$(git rev-parse HEAD)" --workflow CI --limit 1 --json databaseId -q '.[0].databaseId')
+  test -n "$run" && break
+  sleep 5 # the push that triggers CI may not have registered yet
+done
+test -n "$run" || { echo "no CI run for $(git rev-parse --short HEAD)" >&2; exit 1; }
+gh run watch "$run" --exit-status > /dev/null || { echo "CI failed: gh run view $run" >&2; exit 1; }
+
 go vet ./...
 go test -race -p 1 ./...
 git tag -a "$tag" -m "baton $tag"

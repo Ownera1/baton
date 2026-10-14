@@ -12,7 +12,7 @@ func agyArgv(o Options) []string {
 	if o.Mode == "write" {
 		mode = "accept-edits"
 	}
-	a := []string{"-p", o.Prompt, "--output-format", "stream-json", "--mode", mode}
+	a := []string{"-p=", "--input-format", "stream-json", "--output-format", "stream-json", "--mode", mode}
 	if o.Model != "" {
 		a = append(a, "--model", o.Model)
 	}

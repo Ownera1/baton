@@ -149,3 +149,47 @@ func TestSaveConfig(t *testing.T) {
 		t.Fatalf("temp files left: %v", entries)
 	}
 }
+
+func TestWorkerCommand(t *testing.T) {
+	for cmd, want := range map[string]bool{
+		"/opt/homebrew/bin/baton _worker 20261014-071917-9009cb91d2b1c2cc": true,
+		"baton _worker 20261014-071917-9009cb91d2b1c2cc":                   true,
+		"/tmp/my tools/baton _worker 20261014-071917-9009cb91d2b1c2cc":     true,
+		"python train.py _worker 3":                                        false,
+		"vim notes_worker _worker.md":                                      false,
+		"/usr/bin/other _worker 20261014-071917-9009cb91d2b1c2cc":          false,
+	} {
+		if workerCommand.MatchString(cmd) != want {
+			t.Errorf("%q: want %v", cmd, want)
+		}
+	}
+}
+
+func TestListCache(t *testing.T) {
+	s := &Service{Home: t.TempDir()}
+	id := "20261011-090000-aaaa1111bbbb2222"
+	dir := filepath.Join(s.Home, "tasks", id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSON(filepath.Join(dir, "request.json"), request{Task: Task{ID: id, Title: "one"}, Number: 1}); err != nil {
+		t.Fatal(err)
+	}
+	for i, title := range []string{"one", "one", "two", "two"} {
+		if i == 2 {
+			if err := writeJSON(filepath.Join(dir, "task.json"), Task{ID: id, Title: "two", Status: "succeeded", Turns: []Turn{{Number: 1}}}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// The queued turn status adds must not pile up in the cached task.
+		if list, err := s.List(""); err != nil || list.Tasks[0].Title != title || len(list.Tasks[0].Turns) != 1 {
+			t.Fatalf("%d: %+v %v", i, list.Tasks[0], err)
+		}
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.List(""); err != nil || len(s.loaded) != 0 {
+		t.Fatalf("removed task stays cached: %v %v", s.loaded, err)
+	}
+}

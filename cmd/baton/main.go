@@ -140,303 +140,352 @@ func run(args []string) error {
 	cmd := args[0]
 	fs := flag.NewFlagSet("baton "+cmd, flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "JSON output")
-	switch cmd {
-	case "_worker":
-		if len(args) != 2 {
-			return fmt.Errorf("worker requires task id")
-		}
-		return svc.Worker(args[1])
-	case "tui":
-		theme := fs.String("theme", "", "auto|light|dark (default: config, then auto)")
-		if _, err := parse(fs, args[1:]); err != nil {
+	fn, ok := subcommands[cmd]
+	if !ok {
+		return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
+	}
+	return fn(svc, cmd, fs, asJSON, args)
+}
+
+// subcommands get the service, their own name, a flag set that already has
+// -json, and the whole argument list.
+var subcommands = map[string]func(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error{
+	"_worker":  cmdWorker,
+	"tui":      cmdTUI,
+	"do":       cmdRun,
+	"ask":      cmdRun,
+	"run":      cmdRun,
+	"reply":    cmdReply,
+	"status":   cmdTask,
+	"wait":     cmdTask,
+	"result":   cmdTask,
+	"cancel":   cmdTask,
+	"config":   cmdConfig,
+	"agents":   cmdAgents,
+	"list":     cmdList,
+	"ls":       cmdList,
+	"export":   cmdExport,
+	"clean":    cmdClean,
+	"sessions": cmdSessions,
+}
+
+func cmdWorker(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	if len(args) != 2 {
+		return fmt.Errorf("worker requires task id")
+	}
+	return svc.Worker(args[1])
+}
+
+func cmdTUI(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	theme := fs.String("theme", "", "auto|light|dark (default: config, then auto)")
+	if _, err := parse(fs, args[1:]); err != nil {
+		return err
+	}
+	return tui.Run(svc, *theme, false)
+}
+
+func cmdRun(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	var req app.RunRequest
+	var commands checks
+	fs.StringVar(&req.Agent, "agent", "", "codex|claude|grok|agy|pi or a role (default: BATON_AGENT, config, then codex)")
+	fs.StringVar(&req.Repo, "repo", "", "git repository (default: current directory)")
+	fs.StringVar(&req.Task, "task", "", "text or @file")
+	fs.StringVar(&req.Base, "base", "", "finished write task to continue from")
+	fs.StringVar(&req.Group, "group", "", "label for tasks working on one goal")
+	fs.StringVar(&req.Title, "title", "", "conversation title (inferred from task when omitted)")
+	fs.StringVar(&req.Model, "model", "", "model (default: Baton config, then the agent's own config)")
+	fs.StringVar(&req.Effort, "effort", "", "reasoning effort (default: Baton config, then the agent's own config)")
+	fs.StringVar(&req.Timeout, "timeout", "", "turn timeout, including checks (default: config, then 2h)")
+	fs.Var(&commands, "check", "check command (repeatable; default: detected from the project)")
+	fs.BoolVar(&req.NoChecks, "no-check", false, "run no checks")
+	wait := fs.Bool("w", false, "wait for the task and print its result")
+	req.Mode = map[string]string{"do": "write", "ask": "read"}[cmd]
+	if cmd == "run" {
+		fs.StringVar(&req.Mode, "mode", "", "read|write (default: the role's mode, then write)")
+	}
+	pos, err := parse(fs, args[1:])
+	if err != nil {
+		return err
+	}
+	agent, pos := splitAgent(pos, cmp.Or(req.Repo, "."))
+	if req.Agent == "" {
+		req.Agent = agent
+	} else if agent != "" {
+		pos = append([]string{agent}, pos...)
+	}
+	if req.Task == "" {
+		if req.Task, err = text(pos, os.Stdin, stdinPiped()); err != nil {
 			return err
 		}
-		return tui.Run(svc, *theme, false)
-	case "do", "ask", "run":
-		var req app.RunRequest
-		var commands checks
-		fs.StringVar(&req.Agent, "agent", "", "codex|claude|grok|agy|pi or a role (default: BATON_AGENT, config, then codex)")
-		fs.StringVar(&req.Repo, "repo", "", "git repository (default: current directory)")
-		fs.StringVar(&req.Task, "task", "", "text or @file")
-		fs.StringVar(&req.Base, "base", "", "finished write task to continue from")
-		fs.StringVar(&req.Group, "group", "", "label for tasks working on one goal")
-		fs.StringVar(&req.Title, "title", "", "conversation title (inferred from task when omitted)")
-		fs.StringVar(&req.Model, "model", "", "model (default: Baton config, then the agent's own config)")
-		fs.StringVar(&req.Effort, "effort", "", "reasoning effort (default: Baton config, then the agent's own config)")
-		fs.StringVar(&req.Timeout, "timeout", "", "turn timeout, including checks (default: config, then 2h)")
-		fs.Var(&commands, "check", "check command (repeatable; default: detected from the project)")
-		fs.BoolVar(&req.NoChecks, "no-check", false, "run no checks")
-		wait := fs.Bool("w", false, "wait for the task and print its result")
-		req.Mode = map[string]string{"do": "write", "ask": "read"}[cmd]
-		if cmd == "run" {
-			fs.StringVar(&req.Mode, "mode", "", "read|write (default: the role's mode, then write)")
+	} else if len(pos) > 0 {
+		return fmt.Errorf("task given twice: -task and %q", strings.Join(pos, " "))
+	}
+	if commands != nil {
+		req.Checks = commands
+	}
+	sub, err := svc.Run(req)
+	if err != nil {
+		return err
+	}
+	return submitted(svc, sub.ID, *wait, *asJSON)
+}
+
+func cmdReply(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	var msg, timeout string
+	fs.StringVar(&msg, "msg", "", "text or @file")
+	fs.StringVar(&timeout, "timeout", "", "turn timeout (default: config, then 2h)")
+	wait := fs.Bool("w", false, "wait for the turn and print its result")
+	pos, err := parse(fs, args[1:])
+	if err != nil {
+		return err
+	}
+	ref := ""
+	if msg == "" && len(pos) >= 2 && !strings.ContainsAny(pos[0], " \n") {
+		if _, err := svc.Resolve(pos[0]); err == nil {
+			ref, pos = pos[0], pos[1:]
 		}
-		pos, err := parse(fs, args[1:])
-		if err != nil {
+	} else if msg != "" && len(pos) == 1 {
+		ref, pos = pos[0], nil
+	} else if msg != "" && len(pos) > 1 {
+		return fmt.Errorf("message given twice: -msg and %q", strings.Join(pos, " "))
+	}
+	if msg == "" {
+		if msg, err = text(pos, os.Stdin, stdinPiped()); err != nil {
 			return err
 		}
-		agent, pos := splitAgent(pos, cmp.Or(req.Repo, "."))
-		if req.Agent == "" {
-			req.Agent = agent
-		} else if agent != "" {
-			pos = append([]string{agent}, pos...)
-		}
-		if req.Task == "" {
-			if req.Task, err = text(pos, os.Stdin, stdinPiped()); err != nil {
+	}
+	id, err := svc.Resolve(ref)
+	if err != nil {
+		return err
+	}
+	if _, err := svc.Reply(app.ReplyRequest{ID: id, Message: msg, Timeout: timeout}); err != nil {
+		return err
+	}
+	return submitted(svc, id, *wait, *asJSON)
+}
+
+func cmdTask(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	timeout := fs.Duration("timeout", app.DefaultTimeout, "wait timeout")
+	first := new(bool)
+	if cmd == "wait" {
+		fs.BoolVar(first, "any", false, "with several tasks, return when the first finishes")
+	}
+	pos, err := parse(fs, args[1:])
+	if err != nil {
+		return err
+	}
+	if cmd == "wait" && len(pos) > 1 {
+		ids := make([]string, len(pos))
+		for i, ref := range pos {
+			if ids[i], err = svc.Resolve(ref); err != nil {
 				return err
 			}
-		} else if len(pos) > 0 {
-			return fmt.Errorf("task given twice: -task and %q", strings.Join(pos, " "))
 		}
-		if commands != nil {
-			req.Checks = commands
-		}
-		sub, err := svc.Run(req)
-		if err != nil {
-			return err
-		}
-		return submitted(svc, sub.ID, *wait, *asJSON)
-	case "reply":
-		var msg, timeout string
-		fs.StringVar(&msg, "msg", "", "text or @file")
-		fs.StringVar(&timeout, "timeout", "", "turn timeout (default: config, then 2h)")
-		wait := fs.Bool("w", false, "wait for the turn and print its result")
-		pos, err := parse(fs, args[1:])
-		if err != nil {
-			return err
-		}
-		ref := ""
-		if msg == "" && len(pos) >= 2 && !strings.ContainsAny(pos[0], " \n") {
-			if _, err := svc.Resolve(pos[0]); err == nil {
-				ref, pos = pos[0], pos[1:]
-			}
-		} else if msg != "" && len(pos) == 1 {
-			ref, pos = pos[0], nil
-		} else if msg != "" && len(pos) > 1 {
-			return fmt.Errorf("message given twice: -msg and %q", strings.Join(pos, " "))
-		}
-		if msg == "" {
-			if msg, err = text(pos, os.Stdin, stdinPiped()); err != nil {
-				return err
-			}
-		}
-		id, err := svc.Resolve(ref)
-		if err != nil {
-			return err
-		}
-		if _, err := svc.Reply(app.ReplyRequest{ID: id, Message: msg, Timeout: timeout}); err != nil {
-			return err
-		}
-		return submitted(svc, id, *wait, *asJSON)
-	case "status", "wait", "result", "cancel":
-		timeout := fs.Duration("timeout", app.DefaultTimeout, "wait timeout")
-		first := new(bool)
-		if cmd == "wait" {
-			fs.BoolVar(first, "any", false, "with several tasks, return when the first finishes")
-		}
-		pos, err := parse(fs, args[1:])
-		if err != nil {
-			return err
-		}
-		if cmd == "wait" && len(pos) > 1 {
-			ids := make([]string, len(pos))
-			for i, ref := range pos {
-				if ids[i], err = svc.Resolve(ref); err != nil {
-					return err
-				}
-			}
-			tasks, err := svc.WaitMany(context.Background(), ids, *first, *timeout)
-			if *asJSON {
-				_ = emit(map[string]any{"tasks": tasks})
-			} else {
-				for _, t := range tasks {
-					fmt.Println(line(t))
-				}
-			}
-			return err
-		}
-		if len(pos) > 1 {
-			return fmt.Errorf("%s takes at most one task", cmd)
-		}
-		id, err := svc.Resolve(strings.Join(pos, ""))
-		if err != nil {
-			return err
-		}
-		switch cmd {
-		case "status":
-			t, err := svc.Status(id)
-			if err != nil || *asJSON {
-				return orEmit(t, err)
-			}
-			fmt.Println(line(t))
-			return nil
-		case "wait":
-			t, err := svc.Wait(context.Background(), id, *timeout)
-			if *asJSON {
-				_ = emit(t)
-			} else if t != nil {
+		tasks, err := svc.WaitMany(context.Background(), ids, *first, *timeout)
+		if *asJSON {
+			_ = emit(map[string]any{"tasks": tasks})
+		} else {
+			for _, t := range tasks {
 				fmt.Println(line(t))
 			}
-			return err
-		case "result":
-			r, err := svc.Result(id)
-			if err != nil || *asJSON {
-				return orEmit(r, err)
-			}
-			printResult(r)
-			return nil
-		default:
-			t, err := svc.Cancel(id)
-			if err != nil || *asJSON {
-				return orEmit(t, err)
-			}
-			fmt.Println(line(t))
-			return nil
 		}
-	case "config":
-		theme := fs.String("theme", "", "auto|light|dark (default: config, then auto)")
-		if _, err := parse(fs, args[1:]); err != nil {
-			return err
-		}
-		if !*asJSON && terminal(os.Stdin) && terminal(os.Stdout) {
-			return tui.Run(svc, *theme, true)
-		}
-		return printConfig(*asJSON)
-	case "agents":
-		repo := fs.String("repo", "", "git repository whose roles to include (default: current directory)")
-		if _, err := parse(fs, args[1:]); err != nil {
-			return err
-		}
-		list, err := app.AgentsFor(cmp.Or(*repo, "."), true)
+		return err
+	}
+	if len(pos) > 1 {
+		return fmt.Errorf("%s takes at most one task", cmd)
+	}
+	id, err := svc.Resolve(strings.Join(pos, ""))
+	if err != nil {
+		return err
+	}
+	switch cmd {
+	case "status":
+		t, err := svc.Status(id)
 		if err != nil || *asJSON {
-			return orEmit(list, err)
+			return orEmit(t, err)
 		}
-		for _, a := range list.Agents {
-			var parts []string
-			if a.Agent != "" {
-				parts = append(parts, "角色 → "+a.Agent)
-			}
-			if a.Mode != "" {
-				parts = append(parts, "只"+app.ModeName(a.Mode))
-			}
-			if a.Model != "" || a.Effort != "" {
-				parts = append(parts, cmp.Or(a.Model, "默认模型")+" / "+cmp.Or(a.Effort, "默认 effort"))
-			}
-			if a.Default {
-				parts = append(parts, "默认")
-			}
-			if a.Hidden {
-				parts = append(parts, "对主 Agent 隐藏")
-			}
-			if a.Description != "" {
-				parts = append(parts, a.Description)
-			}
-			if a.Error != "" {
-				parts = append(parts, "✗ "+a.Error)
-			}
-			fmt.Printf("%-10s %s\n", a.Name, strings.Join(parts, " · "))
-		}
+		fmt.Println(line(t))
 		return nil
-	case "list", "ls":
-		group := fs.String("group", "", "only tasks in this group")
-		if _, err := parse(fs, args[1:]); err != nil {
-			return err
-		}
-		list, err := svc.List(*group)
-		if err != nil || *asJSON {
-			return orEmit(list, err)
-		}
-		for _, t := range list.Tasks {
-			fmt.Println(line(t))
-		}
-		return nil
-	case "export":
-		var req app.ExportRequest
-		all := fs.Bool("all", false, "every task of the repository (-repo, default current directory)")
-		fs.StringVar(&req.Repo, "repo", "", "every task of this git repository")
-		fs.StringVar(&req.Group, "group", "", "every task in this group")
-		pos, err := parse(fs, args[1:])
-		if err != nil {
-			return err
-		}
-		if *all && req.Repo == "" {
-			req.Repo = "."
-		}
-		req.IDs = pos
-		out, err := svc.Export(req)
-		if err != nil || *asJSON {
-			return orEmit(out, err)
-		}
-		for _, f := range out.Files {
-			fmt.Println(f)
-		}
-		return nil
-	case "clean":
-		var req app.CleanRequest
-		repo := fs.String("repo", ".", "git repository")
-		all := fs.Bool("all", false, "every repository")
-		fs.BoolVar(&req.Force, "force", false, "also remove write tasks whose branch is not merged")
-		pos, err := parse(fs, args[1:])
-		if err != nil {
-			return err
-		}
-		if req.IDs = pos; !*all {
-			req.Repo = *repo
-		}
-		plan, err := svc.PlanClean(req)
-		if err != nil {
-			return err
-		}
-		fmt.Print(plan.Text())
-		if plan.Removable() == 0 {
-			return nil
-		}
-		// A person confirms on a terminal; an agent's shell has none and uses
-		// baton_clean, which asks the user through the MCP client.
-		if !terminal(os.Stdin) {
-			return fmt.Errorf("clean asks for confirmation on a terminal; run it in one")
-		}
-		fmt.Print("确认删除？[y/N] ")
-		if answer, _ := bufio.NewReader(os.Stdin).ReadString('\n'); strings.ToLower(strings.TrimSpace(answer)) != "y" {
-			fmt.Println("未删除")
-			return nil
-		}
-		svc.Clean(plan)
+	case "wait":
+		t, err := svc.Wait(context.Background(), id, *timeout)
 		if *asJSON {
-			return emit(plan)
+			_ = emit(t)
+		} else if t != nil {
+			fmt.Println(line(t))
 		}
-		fmt.Printf("已删除 %d 个任务\n", len(plan.Removed))
-		for _, it := range plan.Tasks {
-			if it.Error != "" {
-				fmt.Printf("  %s 删除失败：%s\n", app.ShortID(it.ID), it.Error)
-			}
-		}
-		return nil
-	case "sessions":
-		repo := fs.String("repo", ".", "git repository")
-		all := fs.Bool("all", false, "every repository")
-		if _, err := parse(fs, args[1:]); err != nil {
-			return err
-		}
-		if *all {
-			*repo = ""
-		}
-		sessions, err := svc.Sessions(*repo)
+		return err
+	case "result":
+		r, err := svc.Result(id)
 		if err != nil || *asJSON {
-			return orEmit(map[string]any{"sessions": sessions}, err)
+			return orEmit(r, err)
 		}
-		for _, s := range sessions {
-			fmt.Printf("%s %s · %s · %s · %s\n  目录 %s\n", app.ShortID(s.Task), s.Title, s.Agent, app.ModeName(s.Mode), filepath.Base(s.Repo), s.Dir)
-			if s.Transcript != "" {
-				fmt.Println("  会话", s.Transcript)
-			}
-			for _, turn := range s.Turns {
-				fmt.Println("  轮次", turn)
-			}
+		printResult(r)
+		return nil
+	default:
+		t, err := svc.Cancel(id)
+		if err != nil || *asJSON {
+			return orEmit(t, err)
 		}
+		fmt.Println(line(t))
 		return nil
 	}
-	return fmt.Errorf("unknown command %q\n\n%s", cmd, usage)
+}
+
+func cmdConfig(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	theme := fs.String("theme", "", "auto|light|dark (default: config, then auto)")
+	if _, err := parse(fs, args[1:]); err != nil {
+		return err
+	}
+	if !*asJSON && terminal(os.Stdin) && terminal(os.Stdout) {
+		return tui.Run(svc, *theme, true)
+	}
+	return printConfig(*asJSON)
+}
+
+func cmdAgents(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	repo := fs.String("repo", "", "git repository whose roles to include (default: current directory)")
+	if _, err := parse(fs, args[1:]); err != nil {
+		return err
+	}
+	list, err := app.AgentsFor(cmp.Or(*repo, "."), true)
+	if err != nil || *asJSON {
+		return orEmit(list, err)
+	}
+	for _, a := range list.Agents {
+		var parts []string
+		if a.Agent != "" {
+			parts = append(parts, "角色 → "+a.Agent)
+		}
+		if a.Repo {
+			parts = append(parts, "来自仓库")
+		}
+		if a.Mode != "" {
+			parts = append(parts, "只"+app.ModeName(a.Mode))
+		}
+		if a.Model != "" || a.Effort != "" {
+			parts = append(parts, cmp.Or(a.Model, "默认模型")+" / "+cmp.Or(a.Effort, "默认 effort"))
+		}
+		if a.Default {
+			parts = append(parts, "默认")
+		}
+		if a.Hidden {
+			parts = append(parts, "对主 Agent 隐藏")
+		}
+		if a.Description != "" {
+			parts = append(parts, a.Description)
+		}
+		if a.Error != "" {
+			parts = append(parts, "✗ "+a.Error)
+		}
+		fmt.Printf("%-10s %s\n", a.Name, strings.Join(parts, " · "))
+	}
+	return nil
+}
+
+func cmdList(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	group := fs.String("group", "", "only tasks in this group")
+	if _, err := parse(fs, args[1:]); err != nil {
+		return err
+	}
+	list, err := svc.List(*group)
+	if err != nil || *asJSON {
+		return orEmit(list, err)
+	}
+	for _, t := range list.Tasks {
+		fmt.Println(line(t))
+	}
+	return nil
+}
+
+func cmdExport(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	var req app.ExportRequest
+	all := fs.Bool("all", false, "every task of the repository (-repo, default current directory)")
+	fs.StringVar(&req.Repo, "repo", "", "every task of this git repository")
+	fs.StringVar(&req.Group, "group", "", "every task in this group")
+	pos, err := parse(fs, args[1:])
+	if err != nil {
+		return err
+	}
+	if *all && req.Repo == "" {
+		req.Repo = "."
+	}
+	req.IDs = pos
+	out, err := svc.Export(req)
+	if err != nil || *asJSON {
+		return orEmit(out, err)
+	}
+	for _, f := range out.Files {
+		fmt.Println(f)
+	}
+	return nil
+}
+
+func cmdClean(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	var req app.CleanRequest
+	repo := fs.String("repo", ".", "git repository")
+	all := fs.Bool("all", false, "every repository")
+	fs.BoolVar(&req.Force, "force", false, "also remove write tasks whose branch is not merged")
+	pos, err := parse(fs, args[1:])
+	if err != nil {
+		return err
+	}
+	if req.IDs = pos; !*all {
+		req.Repo = *repo
+	}
+	plan, err := svc.PlanClean(req)
+	if err != nil {
+		return err
+	}
+	fmt.Print(plan.Text())
+	if plan.Removable() == 0 {
+		return nil
+	}
+	// A person confirms on a terminal; an agent's shell has none and uses
+	// baton_clean, which asks the user through the MCP client.
+	if !terminal(os.Stdin) {
+		return fmt.Errorf("clean asks for confirmation on a terminal; run it in one")
+	}
+	fmt.Print("确认删除？[y/N] ")
+	if answer, _ := bufio.NewReader(os.Stdin).ReadString('\n'); strings.ToLower(strings.TrimSpace(answer)) != "y" {
+		fmt.Println("未删除")
+		return nil
+	}
+	svc.Clean(plan)
+	if *asJSON {
+		return emit(plan)
+	}
+	fmt.Printf("已删除 %d 个任务\n", len(plan.Removed))
+	for _, it := range plan.Tasks {
+		if it.Error != "" {
+			fmt.Printf("  %s 删除失败：%s\n", app.ShortID(it.ID), it.Error)
+		}
+	}
+	return nil
+}
+
+func cmdSessions(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	repo := fs.String("repo", ".", "git repository")
+	all := fs.Bool("all", false, "every repository")
+	if _, err := parse(fs, args[1:]); err != nil {
+		return err
+	}
+	if *all {
+		*repo = ""
+	}
+	sessions, err := svc.Sessions(*repo)
+	if err != nil || *asJSON {
+		return orEmit(map[string]any{"sessions": sessions}, err)
+	}
+	for _, s := range sessions {
+		fmt.Printf("%s %s · %s · %s · %s\n  目录 %s\n", app.ShortID(s.Task), s.Title, s.Agent, app.ModeName(s.Mode), filepath.Base(s.Repo), s.Dir)
+		if s.Transcript != "" {
+			fmt.Println("  会话", s.Transcript)
+		}
+		for _, turn := range s.Turns {
+			fmt.Println("  轮次", turn)
+		}
+	}
+	return nil
 }
 
 func orEmit(value any, err error) error {

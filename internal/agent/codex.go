@@ -41,7 +41,7 @@ func codexArgv(o Options) []string {
 	if o.SessionID != "" {
 		a = append(a, o.SessionID)
 	}
-	return append(a, "-") // the prompt comes on stdin, see PromptOnStdin
+	return append(a, "-") // the prompt comes on stdin, see Stdin
 }
 
 func parseCodex(b []byte, last string) (Result, error) {
