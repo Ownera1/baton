@@ -73,6 +73,10 @@ func TestResolve(t *testing.T) {
 	if _, err := s.Resolve("ffff"); err == nil {
 		t.Error("unknown ref must fail")
 	}
+	// `baton reply 22 is the answer` must not send "is the answer" to ...bbbb2222.
+	if _, err := s.Resolve("22"); err == nil || !strings.Contains(err.Error(), "too short") {
+		t.Errorf("short ref: %v", err)
+	}
 }
 
 func TestLoadConfig(t *testing.T) {

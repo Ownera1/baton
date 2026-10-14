@@ -73,6 +73,10 @@ func (s *Service) PlanClean(req CleanRequest) (*CleanPlan, error) {
 		switch _, err := os.Stat(t.Repo); {
 		case active(t.Status):
 			it.Keep = "还没结束，先等它结束或 baton cancel"
+		case t.Unreadable:
+			if !req.Force {
+				it.Keep = "任务记录读不出来，force 才删除（只删记录，分支要自己删）"
+			}
 		case t.Mode != "write":
 		case err != nil:
 			if !req.Force {
@@ -156,7 +160,8 @@ func (s *Service) Clean(plan *CleanPlan) {
 func (s *Service) remove(id string) error {
 	t, err := s.Status(id)
 	if err != nil {
-		return err
+		// Only an unreadable task gets here, forced; its worktree lives in its directory.
+		return os.RemoveAll(filepath.Join(s.Home, "tasks", id))
 	}
 	if active(t.Status) {
 		return fmt.Errorf("task is %s again", t.Status)

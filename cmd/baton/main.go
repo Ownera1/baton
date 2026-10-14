@@ -3,6 +3,7 @@ package main
 import (
 	"baton/internal/agent"
 	"baton/internal/app"
+	"baton/internal/guard"
 	"baton/internal/mcpserver"
 	"baton/internal/tui"
 	"bufio"
@@ -546,7 +547,8 @@ func printConfig(asJSON bool) error {
 	}
 	if asJSON {
 		return emit(map[string]any{"path": path, "exists": raw != nil, "agent": cfg.DefaultAgent(),
-			"timeout": cfg.TurnTimeout().String(), "theme": cmp.Or(cfg.Theme, "auto"), "max_parallel": cfg.MaxParallel, "agents": agents})
+			"timeout": cfg.TurnTimeout().String(), "theme": cmp.Or(cfg.Theme, "auto"), "max_parallel": cfg.MaxParallel,
+			"memory_mb": cmp.Or(cfg.MemoryMB, guard.DefaultMemoryMB), "cpus": cmp.Or(cfg.CPUs, guard.DefaultCPUs), "agents": agents})
 	}
 	note := ""
 	if raw == nil {
@@ -561,7 +563,8 @@ func printConfig(asJSON bool) error {
 	if cfg.MaxParallel > 0 {
 		parallel = fmt.Sprint(cfg.MaxParallel)
 	}
-	fmt.Printf("默认 Agent %s%s · 超时 %s · 主题 %s · 同时运行 %s\n", cfg.DefaultAgent(), source, cfg.TurnTimeout(), cmp.Or(cfg.Theme, "auto"), parallel)
+	fmt.Printf("默认 Agent %s%s · 超时 %s · 主题 %s · 同时运行 %s · 内存上限 %d MB · CPU %d\n", cfg.DefaultAgent(), source, cfg.TurnTimeout(),
+		cmp.Or(cfg.Theme, "auto"), parallel, cmp.Or(cfg.MemoryMB, guard.DefaultMemoryMB), cmp.Or(cfg.CPUs, guard.DefaultCPUs))
 	or := func(s string) string { return cmp.Or(s, "默认") }
 	for _, name := range app.Agents {
 		v := agents[name]

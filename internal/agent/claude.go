@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 )
@@ -25,21 +26,26 @@ func claudeArgv(o Options) []string {
 
 func parseClaude(b []byte) (Result, error) {
 	var result json.RawMessage
+	session := "" // every event carries it, so a turn cut off before its result can still be resumed
 	err := jsonLines(b, func(raw json.RawMessage) error {
-		var e struct{ Type string }
+		var e struct {
+			Type      string
+			SessionID string `json:"session_id"`
+		}
 		if err := json.Unmarshal(raw, &e); err != nil {
 			return err
 		}
+		session = cmp.Or(e.SessionID, session)
 		if e.Type == "result" {
 			result = raw
 		}
 		return nil
 	})
 	if err != nil {
-		return Result{}, err
+		return Result{SessionID: session}, err
 	}
 	if result == nil {
-		return Result{}, fmt.Errorf("missing result")
+		return Result{SessionID: session}, fmt.Errorf("missing result")
 	}
 	return parseClaudeResult(result)
 }

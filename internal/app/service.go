@@ -60,6 +60,11 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	if in.Mode != "read" && in.Mode != "write" {
 		return nil, fmt.Errorf("mode must be read or write")
 	}
+	if role != nil {
+		if err := role.unsandboxed(in.Agent, in.Mode); err != nil {
+			return nil, err
+		}
+	}
 	ac := cfg.Agents[in.Agent]
 	if in.FromMCP && ac.Hidden && role == nil {
 		return nil, hidden(in.Agent)
@@ -367,7 +372,10 @@ func (s *Service) List(group string) (*ListResult, error) {
 	for _, id := range ids {
 		t, err := s.Status(id)
 		if err != nil {
-			return nil, fmt.Errorf("task %s: %w", id, err)
+			// One unreadable record must not hide the others; clean -force removes it.
+			created, _ := time.Parse("20060102-150405", id[:min(len(id), 15)])
+			t = &Task{ID: id, Status: "failed", Unreadable: true, CreatedAt: created,
+				Turns: []Turn{{Number: 1, ExitCode: -1, Error: "cannot read task: " + err.Error()}}}
 		}
 		if group == "" || t.Group == group {
 			r.Tasks = append(r.Tasks, t)

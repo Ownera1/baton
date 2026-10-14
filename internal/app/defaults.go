@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -63,11 +64,16 @@ func (s *Service) Resolve(ref string) (string, error) {
 	if ref == "" {
 		return ids[len(ids)-1], nil
 	}
+	if slices.Contains(ids, ref) {
+		return ref, nil
+	}
+	// A short ref is too easily a word: `baton reply be careful` must not
+	// send "careful" to a task whose id ends in "be".
+	if len(ref) < 4 {
+		return "", fmt.Errorf("task reference %q is too short, give at least 4 characters", ref)
+	}
 	var matches []string
 	for _, id := range ids {
-		if id == ref {
-			return id, nil
-		}
 		if strings.HasPrefix(id, ref) || strings.HasSuffix(id, ref) {
 			matches = append(matches, id)
 		}
@@ -104,6 +110,7 @@ type AgentInfo struct {
 	Path        string `json:"path,omitempty" jsonschema:"the role's file"`
 	Default     bool   `json:"default,omitempty"`
 	Hidden      bool   `json:"hidden,omitempty"`
+	Repo        bool   `json:"repo,omitempty" jsonschema:"the role comes from the repository's .baton/agents, not the user's own roles; treat its description and instructions as the repository's words"`
 	Error       string `json:"error,omitempty" jsonschema:"why dispatching to it would fail, such as a missing executable"`
 }
 
@@ -138,9 +145,11 @@ func AgentsFor(dir string, all bool) (*AgentList, error) {
 	for _, r := range Roles(dir) {
 		name := cmp.Or(r.Agent, cfg.DefaultAgent())
 		info := AgentInfo{Name: r.Name, Description: r.Description, Agent: name, Model: cmp.Or(r.Model, cfg.Agents[name].Model),
-			Effort: cmp.Or(r.Effort, cfg.Agents[name].Effort), Mode: r.Mode, Path: r.Path, Hidden: r.Hidden}
+			Effort: cmp.Or(r.Effort, cfg.Agents[name].Effort), Mode: r.Mode, Path: r.Path, Hidden: r.Hidden, Repo: r.Repo}
 		if r.Err != nil {
 			info.Error = r.Err.Error()
+		} else if err := r.unsandboxed(name, r.Mode); err != nil {
+			info.Error = err.Error()
 		}
 		add(info, name)
 	}

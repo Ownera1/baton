@@ -20,15 +20,15 @@ func setProcessGroup(cmd *exec.Cmd) {
 	cmd.SysProcAttr.Setpgid = true
 }
 
-// applyNice sets the priority before exec, which is how Linux expresses it.
+// applyNice does nothing on Linux: Go's SysProcAttr has no Nice field, so
+// applyNiceRunning sets the priority after start.
 func applyNice(cmd *exec.Cmd, nice int) {
 	if cmd.SysProcAttr == nil {
 		cmd.SysProcAttr = &syscall.SysProcAttr{}
 	}
-	// Go's SysProcAttr has no Linux Nice field. Apply priority after start.
 }
 
-// applyNiceRunning is unnecessary on Linux: the priority is already set.
+// applyNiceRunning sets the priority of the started process.
 func applyNiceRunning(pid, nice int) {
 	if pid > 0 && nice > 0 {
 		_ = syscall.Setpriority(syscall.PRIO_PROCESS, pid, nice)
