@@ -12,8 +12,8 @@ import (
 )
 
 type Options struct {
-	Mode, Dir, Prompt, Model, Effort, SessionID, LastFile string
-	Path                                                  string // executable; empty means name looked up in PATH
+	Mode, Dir, Model, Effort, SessionID, LastFile string
+	Path                                          string // executable; empty means name looked up in PATH
 	// Cache is a directory a write task may keep build caches in, shared by tasks.
 	Cache string
 }
@@ -40,9 +40,18 @@ func Argv(name string, o Options) ([]string, error) {
 	return append([]string{path}, args...), nil
 }
 
-// PromptOnStdin reports whether the agent reads Options.Prompt from stdin
-// instead of argv, where Linux caps one argument at 128 KiB.
-func PromptOnStdin(name string) bool { return name == "codex" || name == "claude" }
+// Stdin is what the agent reads its prompt from. Every agent takes it on
+// stdin rather than argv, where Linux caps one argument at 128 KiB and ps
+// shows it to other users.
+func Stdin(name, prompt string) string {
+	if name == "agy" {
+		// agy -p only takes the prompt as its value; stream-json input reads it
+		// from stdin as one message (agy 1.3.5).
+		b, _ := json.Marshal(map[string]any{"event": "user", "message": map[string]string{"content": prompt}})
+		return string(b) + "\n"
+	}
+	return prompt
+}
 
 // Env is added to the worker's environment for the agent's process.
 func Env(name string, o Options) []string {

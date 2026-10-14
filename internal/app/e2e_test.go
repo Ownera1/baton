@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"flag"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,12 @@ func TestEndToEnd(t *testing.T) {
 	bin := filepath.Join(dir, "baton")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/baton")
 	build.Dir = root
+	// Under go test -cover the workers report into the test's own coverage:
+	// a -cover binary writes its counters to GOCOVERDIR, which go test merges.
+	if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" && testing.CoverMode() != "" {
+		build.Args = []string{"go", "build", "-cover", "-coverpkg=baton/...", "-o", bin, "./cmd/baton"}
+		t.Setenv("GOCOVERDIR", f.Value.String())
+	}
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}

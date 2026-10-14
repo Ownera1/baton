@@ -20,7 +20,7 @@ func piArgv(o Options) []string {
 	if o.SessionID != "" {
 		a = append(a, "--session", o.SessionID)
 	}
-	return append(a, o.Prompt)
+	return a // -p reads the prompt from stdin
 }
 
 type piMessage struct {

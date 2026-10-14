@@ -172,7 +172,7 @@ func (s *Service) Worker(id string) (retErr error) {
 	if err := os.MkdirAll(cache, 0700); err != nil {
 		return err
 	}
-	opts := agent.Options{Path: t.AgentPath, Mode: t.Mode, Dir: runDir, Prompt: prefix + req.Prompt,
+	opts := agent.Options{Path: t.AgentPath, Mode: t.Mode, Dir: runDir,
 		Model: t.Model, Effort: t.Effort, SessionID: t.SessionID, LastFile: lastFile, Cache: cache}
 	argv, err := agent.Argv(t.Agent, opts)
 	if err != nil {
@@ -189,18 +189,8 @@ func (s *Service) Worker(id string) (retErr error) {
 		return err
 	}
 	defer errout.Close()
-	devnull, err := os.Open(os.DevNull)
-	if err != nil {
-		return err
-	}
-	defer devnull.Close()
-	// A check waits for other tasks' checks as long as the turn may run; ctx
-	// bounds the wait, so a slow check elsewhere never fails this one.
 	limits := guard.Limits{CPUs: cmp.Or(req.CPUs, guard.DefaultCPUs), Nice: guard.DefaultNice, MemoryMB: cmp.Or(req.MemoryMB, guard.DefaultMemoryMB)}
-	stdin := io.Reader(devnull)
-	if agent.PromptOnStdin(t.Agent) {
-		stdin = strings.NewReader(prefix + req.Prompt)
-	}
+	stdin := strings.NewReader(agent.Stdin(t.Agent, prefix+req.Prompt))
 	cr := workspace.RunArgv(runDir, argv, stdin, append(os.Environ(), agent.Env(t.Agent, opts)...), workspace.RunOptions{
 		Context: ctx, Limits: limits, Stdout: out, Stderr: errout, Note: func(msg string) { fmt.Fprintln(os.Stderr, msg) },
 	})

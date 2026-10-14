@@ -6,13 +6,27 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
-type Service struct{ Home string }
+type Service struct {
+	Home string
+
+	mu     sync.Mutex
+	loaded map[string]loaded // List's cache, by task directory
+}
+
+// loaded is a task's files as last read, with the stat they were read at.
+type loaded struct {
+	reqInfo, taskInfo os.FileInfo
+	req               request
+	task              Task
+}
 
 func New() (*Service, error) {
 	home := os.Getenv("BATON_HOME")
@@ -114,6 +128,9 @@ func (s *Service) nested(repo string) error {
 	return nil
 }
 
+// workerCommand is how spawnDetached starts a worker: baton _worker <task id>.
+var workerCommand = regexp.MustCompile(`(^|/)baton _worker \d{8}-\d{6}-[0-9a-f]{16}$`)
+
 // workerAncestor is the pid of a `baton _worker` that started this process, or 0.
 // ponytail: one ps per ancestor; read /proc or sysctl directly if dispatch latency matters.
 func workerAncestor() int {
@@ -123,7 +140,7 @@ func workerAncestor() int {
 			return 0 // ps unavailable or the process is gone; the other checks still apply
 		}
 		ppid, command, _ := strings.Cut(strings.TrimSpace(string(out)), " ")
-		if strings.Contains(command+" ", " _worker ") {
+		if workerCommand.MatchString(strings.TrimSpace(command)) {
 			return pid
 		}
 		pid, _ = strconv.Atoi(ppid)

@@ -7,7 +7,7 @@ import (
 )
 
 func grokArgv(o Options) []string {
-	a := []string{"-p", o.Prompt, "--output-format", "streaming-json", "--cwd", o.Dir, "--permission-mode", "plan"}
+	a := []string{"--prompt-file", "/dev/stdin", "--output-format", "streaming-json", "--cwd", o.Dir, "--permission-mode", "plan"}
 	if o.Mode == "write" {
 		// Headless acceptEdits cancels every write (PermissionCancelled, grok 1.0.41).
 		// auto approves inside the workspace sandbox, which blocks writes outside --cwd.

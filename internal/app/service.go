@@ -176,17 +176,15 @@ func (s *Service) submit(dir string, req request) (*Submitted, error) {
 	return &Submitted{ID: req.Task.ID, Status: "queued"}, nil
 }
 
-func (s *Service) Status(id string) (*Task, error) {
+func (s *Service) Status(id string) (*Task, error) { return s.status(id, false) }
+
+func (s *Service) status(id string, cache bool) (*Task, error) {
 	dir, err := s.dir(id)
 	if err != nil {
 		return nil, err
 	}
-	var req request
-	if err := readJSON(filepath.Join(dir, "request.json"), &req); err != nil {
-		return nil, err
-	}
-	t := req.Task
-	if err := readJSON(filepath.Join(dir, "task.json"), &t); err != nil && !errors.Is(err, os.ErrNotExist) {
+	req, t, err := s.load(dir, cache)
+	if err != nil {
 		return nil, err
 	}
 	if req.Number > len(t.Turns) {
@@ -203,6 +201,49 @@ func (s *Service) Status(id string) (*Task, error) {
 		t.Status = "stale"
 	}
 	return &t, nil
+}
+
+// load reads a task's request and record. With cache it skips files whose
+// stat is unchanged since the last call: the panel lists every task each
+// second. Every write is a rename, so a changed file is a different file.
+func (s *Service) load(dir string, cache bool) (request, Task, error) {
+	reqPath, taskPath := filepath.Join(dir, "request.json"), filepath.Join(dir, "task.json")
+	reqInfo, err := os.Stat(reqPath)
+	if err != nil {
+		return request{}, Task{}, err
+	}
+	taskInfo, _ := os.Stat(taskPath)
+	same := func(a, b os.FileInfo) bool {
+		return a == nil && b == nil || a != nil && b != nil && os.SameFile(a, b) && a.ModTime().Equal(b.ModTime()) && a.Size() == b.Size()
+	}
+	if cache {
+		s.mu.Lock()
+		c, ok := s.loaded[dir]
+		s.mu.Unlock()
+		if ok && same(c.reqInfo, reqInfo) && same(c.taskInfo, taskInfo) {
+			t := c.task
+			t.Turns = slices.Clone(t.Turns) // status appends a queued turn
+			return c.req, t, nil
+		}
+	}
+	var req request
+	if err := readJSON(reqPath, &req); err != nil {
+		return req, Task{}, err
+	}
+	t := req.Task
+	if err := readJSON(taskPath, &t); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return req, t, err
+	}
+	if cache {
+		s.mu.Lock()
+		if s.loaded == nil {
+			s.loaded = map[string]loaded{}
+		}
+		s.loaded[dir] = loaded{reqInfo: reqInfo, taskInfo: taskInfo, req: req, task: t}
+		t.Turns = slices.Clone(t.Turns)
+		s.mu.Unlock()
+	}
+	return req, t, nil
 }
 
 // baseTask is a finished write task that another task may continue from.
@@ -370,7 +411,7 @@ func (s *Service) List(group string) (*ListResult, error) {
 	}
 	r := &ListResult{Tasks: []*Task{}}
 	for _, id := range ids {
-		t, err := s.Status(id)
+		t, err := s.status(id, true)
 		if err != nil {
 			// One unreadable record must not hide the others; clean -force removes it.
 			created, _ := time.Parse("20060102-150405", id[:min(len(id), 15)])
@@ -382,6 +423,13 @@ func (s *Service) List(group string) (*ListResult, error) {
 		}
 	}
 	sort.Slice(r.Tasks, func(i, j int) bool { return r.Tasks[i].CreatedAt.After(r.Tasks[j].CreatedAt) })
+	s.mu.Lock()
+	for dir := range s.loaded { // forget removed tasks
+		if !slices.Contains(ids, filepath.Base(dir)) {
+			delete(s.loaded, dir)
+		}
+	}
+	s.mu.Unlock()
 	return r, nil
 }
 

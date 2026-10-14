@@ -8,6 +8,7 @@ claude mcp add baton -- /opt/homebrew/bin/baton mcp   # 接入 Claude Code
 
 make build                  # bin/baton
 make test                   # go vet ./... + go test -p 1 ./...
+make cover                  # 覆盖率，含端到端测试里 worker 子进程跑到的代码
 ```
 
 ## 日常用法
@@ -182,6 +183,6 @@ git merge baton/<a1 的 ID> baton/<b2 的 ID>                 → 主 Agent 用�
 
 已知限制：仅支持 macOS/Linux；PID 存活检查无法识别 PID 复用，意外死亡报告 stale；SIGKILL 无法执行 worker 的清理逻辑，可能遗留子进程。read 使用 Agent 的只读模式，允许源仓库已有改动；它不是独立的 OS 沙箱。任务、分支和 worktree 保留供审阅，用 [`baton clean`](#清理任务) 清理。未提供成本的 Agent 保持成本未知，不估算；result 的顶层回复/用量/成本属于最近一轮，历轮记录在 turns。适配器通过真实输出样本和假 Agent 验证，本项目测试不调用真实服务。
 
-发布：`scripts/release.sh v0.1.1` 跑测试、打 tag、推送，并更新 `Ownera1/homebrew-tap` 的 `Formula/baton.rb`（从源码构建）。
+发布：`scripts/release.sh v0.1.1` 先等 `main` 当前提交的 CI 通过，再跑测试、打 tag、推送，并更新 `Ownera1/homebrew-tap` 的 `Formula/baton.rb`（从源码构建）。
 
 从同作者 CW 复制并裁剪 `guard`、`workspace`、`verify`，以及 detached worker 和 stdio MCP 写法；删除主机负载预检、未使用的格式化/清理/配置接口，不引入 CW 的编排、评审、SQLite 或其他运行层。
