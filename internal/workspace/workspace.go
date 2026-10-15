@@ -43,20 +43,20 @@ func Inspect(repo string) (*Info, error) {
 	if err != nil {
 		return nil, err
 	}
-	root, err := gitOut(abs, "rev-parse", "--show-toplevel")
-	if err != nil {
-		return nil, fmt.Errorf("%s is not inside a git repository: %w", abs, err)
-	}
-	info := &Info{Root: root}
-	if out, err := gitOut(root, "rev-parse", "HEAD"); err == nil {
-		info.Head = out
-		info.HasCommits = true
+	// One git call for root, commit and branch; a repository without commits
+	// fails on HEAD and gets the root alone.
+	var info *Info
+	if out, err := gitOut(abs, "rev-parse", "--show-toplevel", "HEAD", "--abbrev-ref", "HEAD"); err == nil && strings.Count(out, "\n") == 2 {
+		f := strings.Split(out, "\n")
+		info = &Info{Root: f[0], Head: f[1], Branch: f[2], HasCommits: true}
 	} else {
-		info.HasCommits = false
+		root, err := gitOut(abs, "rev-parse", "--show-toplevel")
+		if err != nil {
+			return nil, fmt.Errorf("%s is not inside a git repository: %w", abs, err)
+		}
+		info = &Info{Root: root}
 	}
-	if out, err := gitOut(root, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
-		info.Branch = out
-	}
+	root := info.Root
 	status, stderr, code := GitRun(root, "status", "--porcelain=v1", "--untracked-files=all")
 	if code != 0 {
 		return nil, fmt.Errorf("git status: %s", stderr)

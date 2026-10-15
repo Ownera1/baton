@@ -49,6 +49,11 @@ func TestInspectAndWorktree(t *testing.T) {
 		if out, err := Git(repo, args...); err != nil {
 			t.Fatal(out, err)
 		}
+		if args[0] == "init" {
+			if info, err := Inspect(repo); err != nil || info.HasCommits || info.Head != "" || info.Root == "" {
+				t.Fatalf("no commits: %+v %v", info, err)
+			}
+		}
 	}
 	if err := os.WriteFile(filepath.Join(repo, "new.txt"), nil, 0o600); err != nil {
 		t.Fatal(err)
