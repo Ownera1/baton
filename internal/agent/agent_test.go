@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,13 +13,14 @@ func TestParseFixtures(t *testing.T) {
 	cases := []struct {
 		name, id, text string
 		cost           bool
+		tokens         Tokens // input includes cache reads, output includes reasoning
 	}{
-		{"codex", "01a12aa4-3781-7181-a0c4-33d76e940f0a", "baton-fixture", false},
-		{"claude", "028766dc-fc4b-48bc-91a1-e2577117a785", "baton-fixture", true},
+		{"codex", "01a12aa4-3781-7181-a0c4-33d76e940f0a", "baton-fixture", false, Tokens{47608, 30720, 72, 14}},
+		{"claude", "028766dc-fc4b-48bc-91a1-e2577117a785", "baton-fixture", true, Tokens{4 + 44709 + 44482, 44482, 157, 28}},
 		// The real grok sample includes an explanation after the file content.
-		{"grok", "01a12aa7-8ccd-7b63-aa3d-c1af79300e27", "baton-fixture\n\n`ls -la` is not available in this session, so I listed the directory with the file tool instead. It contains one entry:\n\n- `a.txt`", true},
-		{"agy", "4ab36d9f-121b-476e-8736-01035b3a657d", "baton-fixture", false},
-		{"pi", "01a12aa4-36e9-7576-a665-f8ca272a545e", "baton-fixture", true},
+		{"grok", "01a12aa7-8ccd-7b63-aa3d-c1af79300e27", "baton-fixture\n\n`ls -la` is not available in this session, so I listed the directory with the file tool instead. It contains one entry:\n\n- `a.txt`", true, Tokens{21952 + 2432, 2432, 1112, 944}},
+		{"agy", "4ab36d9f-121b-476e-8736-01035b3a657d", "baton-fixture", false, Tokens{99059 + 617373, 617373, 11122, 9918}},
+		{"pi", "01a12aa4-36e9-7576-a665-f8ca272a545e", "baton-fixture", true, Tokens{6039 + 4608, 4608, 34, 0}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -32,6 +34,9 @@ func TestParseFixtures(t *testing.T) {
 			}
 			if c.cost && *r.CostUSD <= 0 {
 				t.Fatal("missing positive cost")
+			}
+			if got := TurnTokens(c.name, []json.RawMessage{r.Usage})[0]; got != c.tokens {
+				t.Fatalf("tokens %+v, want %+v", got, c.tokens)
 			}
 			found := false
 			for _, e := range Events(c.name, b) {
@@ -62,6 +67,24 @@ func TestParseFixtures(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestTurnTokens(t *testing.T) {
+	first := json.RawMessage(`{"input_tokens":100,"cached_input_tokens":40,"output_tokens":10,"reasoning_output_tokens":5}`)
+	second := json.RawMessage(`{"input_tokens":300,"cached_input_tokens":200,"output_tokens":30,"reasoning_output_tokens":9}`)
+	restarted := json.RawMessage(`{"input_tokens":50,"cached_input_tokens":0,"output_tokens":2,"reasoning_output_tokens":0}`)
+	// codex reports running totals: turns are differences, a failed turn has
+	// no record, and a total that went down is taken as is.
+	got := TurnTokens("codex", []json.RawMessage{first, nil, second, restarted})
+	want := []Tokens{{100, 40, 10, 5}, {}, {200, 160, 20, 4}, {50, 0, 2, 0}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("codex %+v, want %+v", got, want)
+	}
+	a := json.RawMessage(`{"input_tokens":10,"cache_read_input_tokens":90,"output_tokens":5}`)
+	b := json.RawMessage(`{"input_tokens":20,"cache_read_input_tokens":80,"output_tokens":7,"output_tokens_details":{"thinking_tokens":3}}`)
+	if got := TurnTokens("claude", []json.RawMessage{a, b}); !reflect.DeepEqual(got, []Tokens{{100, 90, 5, 0}, {100, 80, 7, 3}}) {
+		t.Fatalf("claude %+v", got)
 	}
 }
 

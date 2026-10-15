@@ -35,6 +35,7 @@ const usage = `用法：
   baton agents                   列出 Agent 和角色（.baton/agents/、~/.config/baton/agents/ 下的 *.md）
   baton sessions [-repo 路径|-all]  列出仓库里任务的会话记录：运行目录、Agent 自己的会话文件、Baton 存的每轮输出
   baton export [任务…] [-all|-group 名字]  把对话导出为 Markdown，写到仓库的 .baton/history/；-all 导出当前仓库全部任务
+  baton stats [-repo 路径|-all|-group 名字]  按 Agent、角色、模型、effort 汇总已结束任务的成功率、用时、token 和花费
   baton clean [任务…] [-all] [-force]  删除已结束的任务（worktree、分支和记录），在终端里确认后执行；默认当前仓库，
                                  写任务的分支须已合并，-force 连未合并的一起删
   baton list | tui | mcp | version
@@ -167,6 +168,7 @@ var subcommands = map[string]func(svc *app.Service, cmd string, fs *flag.FlagSet
 	"export":   cmdExport,
 	"clean":    cmdClean,
 	"sessions": cmdSessions,
+	"stats":    cmdStats,
 }
 
 func cmdWorker(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
@@ -488,6 +490,50 @@ func cmdSessions(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, a
 	return nil
 }
 
+func cmdStats(svc *app.Service, cmd string, fs *flag.FlagSet, asJSON *bool, args []string) error {
+	repo := fs.String("repo", ".", "git repository")
+	all := fs.Bool("all", false, "every repository")
+	group := fs.String("group", "", "only tasks in this group, from every repository")
+	if _, err := parse(fs, args[1:]); err != nil {
+		return err
+	}
+	if *all || *group != "" {
+		*repo = ""
+	}
+	stats, err := svc.Stats(*repo, *group)
+	if err != nil || *asJSON {
+		return orEmit(map[string]any{"stats": stats}, err)
+	}
+	if len(stats) == 0 {
+		fmt.Println("没有已结束的任务")
+	}
+	ms := func(n int64) string { return (time.Duration(n) * time.Millisecond).Round(time.Second).String() }
+	for _, st := range stats {
+		head := (&app.Task{Agent: st.Agent, Role: st.Role}).Who()
+		for _, v := range []string{st.Model, st.Effort} {
+			if v != "" {
+				head += " · " + v
+			}
+		}
+		tk := st.Tokens
+		fmt.Printf("%s\n  %d 个任务：成功 %d，第 1 轮就成功 %d，共 %d 轮\n", head, st.Tasks, st.Succeeded, st.FirstTurn, st.Turns)
+		fmt.Printf("  用时：Agent %s（每任务 %s）· 检查 %s\n", ms(st.AgentMS), ms(st.AgentMS/int64(st.Tasks)), ms(st.CheckMS))
+		fmt.Println("  token：" + tk.String())
+		// Failed attempts are part of what a success costs.
+		if n := int64(st.Succeeded); n > 0 {
+			fmt.Println("  每个成功任务：" + agent.Tokens{Input: tk.Input / n, Cached: tk.Cached / n, Output: tk.Output / n, Reasoning: tk.Reasoning / n}.String())
+		}
+		if st.CostUSD != nil {
+			fmt.Printf("  花费：$%.2f", *st.CostUSD)
+			if st.Succeeded > 0 {
+				fmt.Printf(" · 每个成功任务 $%.2f", *st.CostUSD/float64(st.Succeeded))
+			}
+			fmt.Println()
+		}
+	}
+	return nil
+}
+
 func orEmit(value any, err error) error {
 	if err != nil {
 		return err
@@ -557,6 +603,17 @@ func printResult(r *app.Result) {
 	}
 	if strings.TrimSpace(r.Diffstat) != "" {
 		fmt.Println(strings.TrimRight(r.Diffstat, "\n"))
+	}
+	var total agent.Tokens
+	counted := 0
+	for _, turn := range r.Turns {
+		if turn.Tokens != nil {
+			total.Add(*turn.Tokens)
+			counted++
+		}
+	}
+	if counted > 0 {
+		fmt.Printf("token（%d 轮）：%s\n", counted, total)
 	}
 	for _, w := range r.Warnings {
 		fmt.Println("提示:", w)

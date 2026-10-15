@@ -128,6 +128,9 @@ func (s *Service) Markdown(t *Task) string {
 				b.WriteString(" · " + turn.EndedAt.Sub(*turn.StartedAt).Round(time.Second).String())
 			}
 		}
+		if turn.Tokens != nil {
+			b.WriteString(" · " + turn.Tokens.String())
+		}
 		fmt.Fprintf(&b, "\n\n### 指令\n\n%s\n\n### 回复", strings.TrimSpace(turn.Prompt))
 		stdout, _ := os.ReadFile(filepath.Join(s.Home, "tasks", t.ID, fmt.Sprintf("turn-%d.stdout", turn.Number)))
 		tools := 0
