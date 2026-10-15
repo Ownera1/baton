@@ -1,6 +1,7 @@
 package app
 
 import (
+	"baton/internal/agent"
 	"baton/internal/verify"
 	"encoding/json"
 	"time"
@@ -14,9 +15,12 @@ type Turn struct {
 	ExitCode  int             `json:"exit_code"`
 	FinalText string          `json:"final_text"`
 	Usage     json.RawMessage `json:"usage,omitempty"`
-	CostUSD   *float64        `json:"cost_usd,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	Verify    *verify.Result  `json:"verify,omitempty"`
+	// Tokens is this turn's own usage in common terms, worked out from Usage
+	// whenever the task is read, so older tasks get it too.
+	Tokens  *agent.Tokens  `json:"tokens,omitempty"`
+	CostUSD *float64       `json:"cost_usd,omitempty"`
+	Error   string         `json:"error,omitempty"`
+	Verify  *verify.Result `json:"verify,omitempty"`
 }
 
 type Task struct {
@@ -147,6 +151,19 @@ type request struct {
 }
 
 // Who names the role and its agent, or just the agent.
+// countTokens sets each turn's Tokens from its usage record.
+func (t *Task) countTokens() {
+	usages := make([]json.RawMessage, len(t.Turns))
+	for i, turn := range t.Turns {
+		usages[i] = turn.Usage
+	}
+	for i, tokens := range agent.TurnTokens(t.Agent, usages) {
+		if len(usages[i]) > 0 {
+			t.Turns[i].Tokens = &tokens
+		}
+	}
+}
+
 func (t *Task) Who() string {
 	if t.Role != "" {
 		return t.Role + "（" + t.Agent + "）"

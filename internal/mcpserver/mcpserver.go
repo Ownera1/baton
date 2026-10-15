@@ -145,7 +145,7 @@ func register(srv *mcp.Server, svc *app.Service) {
 			}
 			return nil, out, nil
 		})
-	mcp.AddTool(srv, &mcp.Tool{Name: "baton_result", OutputSchema: map[string]any{"type": "object"}, Description: "Read final reply, session, usage, cost, patch, branch and independently executed checks."},
+	mcp.AddTool(srv, &mcp.Tool{Name: "baton_result", OutputSchema: map[string]any{"type": "object"}, Description: "Read final reply, session, usage, cost, each turn's tokens (input with cache reads, cached, output with reasoning), patch, branch and independently executed checks."},
 		func(ctx context.Context, req *mcp.CallToolRequest, in taskID) (*mcp.CallToolResult, *app.Result, error) {
 			id, err := resolve(svc, in.ID)
 			if err != nil {

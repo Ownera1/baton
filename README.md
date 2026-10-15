@@ -9,6 +9,7 @@ claude mcp add baton -- /opt/homebrew/bin/baton mcp   # 接入 Claude Code
 make build                  # bin/baton
 make test                   # go vet ./... + go test -p 1 ./...
 make cover                  # 覆盖率，含端到端测试里 worker 子进程跑到的代码
+make bench                  # 基准：事件解析吞吐、一次派活的自身开销；用 benchstat 对比前后
 ```
 
 ## 日常用法
@@ -25,6 +26,7 @@ baton do -base a1b2c3d4 补上测试            # 接着另一个写任务的分
 baton result 2fa5f633                     # 结果、分支、检查、diffstat、最终回复
 baton agents                              # 可派的 Agent 和角色
 baton sessions -json                      # 当前仓库各任务的会话记录在哪
+baton stats -group bench                  # 按 Agent、角色、模型汇总成功率、用时、token 和花费
 baton export -all                         # 把当前仓库的对话导出为 Markdown，写到 .baton/history/
 baton config                              # 设置面板；管道或 -json 时打印各 Agent 实际用的模型、effort、可执行文件
 baton                                     # 打开面板（同 baton tui）
@@ -79,6 +81,12 @@ baton                                     # 打开面板（同 baton tui）
 ### 导出对话
 
 `baton export [任务…]`（默认最近一个；`-all` 导出当前仓库的全部任务，`-repo` 指定其他仓库，`-group` 导出一组）、面板里的 `x`、MCP 的 `baton_export` 把对话写成 Markdown，放在任务所属仓库的 `.baton/history/<日期>-<标题>-<ID 后 8 位>.md`，在这个项目里工作的 Agent 都能读到。每轮包含指令、最终回复（附工具调用数）和检查结果；再次导出会覆盖同一个文件。第一次导出时目录里会生成只含 `*` 的 `.gitignore`，导出文件不会让仓库变脏、影响下次派写任务；想提交这些记录就删掉它。
+
+### 统计
+
+`baton stats` 按 Agent（或角色）、模型、effort 汇总当前仓库已结束的任务（`-repo` 指定其他仓库，`-all` 全部仓库，`-group` 只看一组，不限仓库）：任务数、成功数、第 1 轮就成功的数量、轮数，Agent 用时和检查用时，token 和花费，以及每个成功任务平均摊到的 token 和花费（失败任务的消耗也算进去）。`-json` 输出原始数字。
+
+各 Agent 的 usage 字段不同，Baton 读任务时换成同一口径，放在每轮的 `tokens` 里：输入含缓存读写，缓存单列；输出含推理。codex 报的是整个会话的累计值，`tokens` 取与上一轮的差，是这一轮自己的用量。`baton result` 显示各轮合计，`-json`、MCP 的 `baton_result` 和导出的 Markdown 有每轮的明细；原始 `usage` 照旧保留。花费只有 claude、grok、pi 自己报，codex 和 agy 只有 token。Agent 用时是每轮开始到结束减去检查时间，含 Baton 建 worktree、提交和生成 patch，不含排队。想比较几个 Agent 时，把同一批任务派给它们并打上同一个 `-group`。
 
 ### 清理任务
 

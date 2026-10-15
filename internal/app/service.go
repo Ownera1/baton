@@ -234,6 +234,7 @@ func (s *Service) load(dir string, cache bool) (request, Task, error) {
 	if err := readJSON(taskPath, &t); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return req, t, err
 	}
+	t.countTokens()
 	if cache {
 		s.mu.Lock()
 		if s.loaded == nil {
