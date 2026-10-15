@@ -249,7 +249,8 @@ func (w *resourceWatch) loop() {
 	for {
 		select {
 		case <-w.quit:
-			w.sample()
+			// No last sample: halt comes after the group has exited or been
+			// killed, so ps would only find nothing, at the cost of a fork.
 			return
 		case <-t.C:
 			if w.sample() {
