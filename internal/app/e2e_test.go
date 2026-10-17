@@ -261,6 +261,20 @@ printf 'raw stderr\n' >&2
 	if out, err := exec.Command(bin, "reply", submitted.ID, "-msg", "dirty reply").CombinedOutput(); err == nil || !strings.Contains(string(out), "dirty worktree") {
 		t.Fatalf("dirty reply: %s %v", out, err)
 	}
+	// A check that rewrites a committed file, or commits, passes on content
+	// the patch does not hold, so it is no pass.
+	for name, check := range map[string]string{
+		"rewrite": `printf 'two\n' > result.txt && grep -qx two result.txt`,
+		"commit":  "git commit -q --allow-empty -m check",
+	} {
+		cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", name+" check", "-check", check, "-timeout", "20s")
+		cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
+		patch, err := os.ReadFile(task.PatchPath)
+		if err != nil || task.Status != "failed" || task.Verify.Status != "unavailable" || task.Turns[0].Verify.Status != "unavailable" ||
+			!strings.Contains(task.Verify.Notes, "交付的 patch") || !bytes.Contains(patch, []byte("+turn")) || bytes.Contains(patch, []byte("+two")) {
+			t.Fatalf("%s check: %v %s\n%+v", name, err, patch, task)
+		}
+	}
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "missing check", "-check", "/nonexistent-baton-test-command", "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
 	if task.Status != "failed" || task.Verify.Status != "unavailable" || task.Verify.Checks[0].ExitCode != 127 {

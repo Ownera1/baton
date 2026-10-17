@@ -250,6 +250,21 @@ func (s *Service) Worker(id string) (retErr error) {
 		if info.Head != snapshot {
 			t.Warnings = append(t.Warnings, fmt.Sprintf("turn %d: 检查修改了工作区：HEAD 从 %s 变为 %s；patch 对应检查前的提交。", req.Number, snapshot, info.Head))
 		}
+		// A pass speaks for the patch only when the checks left its commit,
+		// tracked files and index as they found them; new untracked files,
+		// such as build output, do not change the patch.
+		changed := info.Head != snapshot
+		if !changed && info.Dirty && t.Verify.Status == verify.StatusPass {
+			tracked, err := workspace.Git(runDir, "status", "--porcelain", "--untracked-files=no")
+			if err != nil {
+				return err
+			}
+			changed = tracked != ""
+		}
+		if changed && t.Verify.Status == verify.StatusPass {
+			t.Verify.Status = verify.StatusUnavailable
+			t.Verify.Notes += "; 检查改动了已跟踪文件、索引或 HEAD，通过的不是交付的 patch"
+		}
 	}
 	return ctx.Err()
 }
