@@ -3,3 +3,4 @@ bin/
 .codegraph/
 .DS_Store
 cover/
+docs/
