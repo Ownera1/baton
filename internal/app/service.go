@@ -147,6 +147,11 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 		t.BaseTask = base.ID
 		t.Group = cmp.Or(t.Group, base.Group)
 	}
+	if in.Mode == "read" && base != nil {
+		// The worker checks BaseCommit out here, detached: the base's own
+		// worktree changes when the base is replied to.
+		t.Worktree = filepath.Join(dir, "wt")
+	}
 	if in.Mode == "write" {
 		t.Worktree = filepath.Join(dir, "wt")
 		t.Branch = "baton/" + id

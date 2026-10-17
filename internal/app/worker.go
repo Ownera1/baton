@@ -127,10 +127,20 @@ func (s *Service) Worker(id string) (retErr error) {
 		if err != nil {
 			return err
 		}
-		if t.Mode == "read" {
-			runDir = bt.Worktree
+		if t.Mode == "read" && t.Worktree == "" {
+			runDir = bt.Worktree // a read task recorded before reads got their own worktree
 		}
 		hint = fmt.Sprintf("这里接着任务 %s（分支 %s）的结果，它的改动可用 git diff %s 查看。\n\n", bt.ID, bt.Branch, bt.BaseCommit)
+	}
+	if t.Mode == "read" && t.Worktree != "" {
+		// The commit recorded at dispatch, detached, so the read sees what it
+		// was asked about even if the base takes another turn meanwhile.
+		runDir = t.Worktree
+		if req.Number == 1 {
+			if _, err := workspace.Git(t.Repo, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", t.Worktree, t.BaseCommit); err != nil {
+				return err
+			}
+		}
 	}
 	if t.Mode == "write" {
 		runDir = t.Worktree

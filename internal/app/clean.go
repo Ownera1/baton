@@ -90,8 +90,9 @@ func (s *Service) PlanClean(req CleanRequest) (*CleanPlan, error) {
 		index[t.ID] = len(plan.Tasks)
 		plan.Tasks = append(plan.Tasks, it)
 	}
-	// A task that stays still needs its base: a read task runs in the base's
-	// worktree, a write task looks the base up every turn.
+	// A task that stays still needs its base: its worker looks the base up
+	// every turn, and a read task recorded before reads got their own
+	// worktree runs in the base's.
 	for changed := true; changed; {
 		changed = false
 		for _, t := range list.Tasks {
@@ -173,8 +174,8 @@ func (s *Service) remove(id string) error {
 	if active(t.Status) {
 		return fmt.Errorf("task is %s again", t.Status)
 	}
-	if _, err := os.Stat(t.Repo); t.Mode == "write" && err == nil {
-		if t.Branch != "baton/"+t.ID {
+	if _, err := os.Stat(t.Repo); t.Worktree != "" && err == nil {
+		if t.Mode == "write" && t.Branch != "baton/"+t.ID {
 			return fmt.Errorf("refusing to delete branch %q of task %s", t.Branch, t.ID)
 		}
 		if _, err := os.Stat(t.Worktree); err == nil {
@@ -185,9 +186,11 @@ func (s *Service) remove(id string) error {
 		} else if _, err := workspace.Git(t.Repo, "worktree", "prune"); err != nil {
 			return err
 		}
-		if _, err := workspace.Git(t.Repo, "rev-parse", "--verify", "-q", "refs/heads/"+t.Branch); err == nil {
-			if _, err := workspace.Git(t.Repo, "branch", "-D", t.Branch); err != nil {
-				return err
+		if t.Mode == "write" { // a read task's worktree is detached, with no branch
+			if _, err := workspace.Git(t.Repo, "rev-parse", "--verify", "-q", "refs/heads/"+t.Branch); err == nil {
+				if _, err := workspace.Git(t.Repo, "branch", "-D", t.Branch); err != nil {
+					return err
+				}
 			}
 		}
 	}

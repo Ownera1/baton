@@ -92,7 +92,7 @@ func (s *Service) Sessions(repo string) ([]Session, error) {
 			continue
 		}
 		dir := t.Repo
-		if t.Mode == "write" {
+		if t.Worktree != "" {
 			dir = t.Worktree
 		} else if base := byID[t.BaseTask]; base != nil {
 			dir = base.Worktree

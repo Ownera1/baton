@@ -64,7 +64,7 @@ type RunRequest struct {
 	Task   string   `json:"task"`
 	Mode   string   `json:"mode,omitempty" jsonschema:"read or write; defaults to the role's mode, then write"`
 	Group  string   `json:"group,omitempty" jsonschema:"label for tasks working on one goal, to list them together; a base task's group is inherited"`
-	Base   string   `json:"base,omitempty" jsonschema:"a finished write task (id, unique prefix or suffix) to continue from: write branches from its latest commit and inherits its checks, read runs in its worktree; repo defaults to its repository"`
+	Base   string   `json:"base,omitempty" jsonschema:"a finished write task (id, unique prefix or suffix) to continue from: write branches from its latest commit and inherits its checks, read runs in its own detached worktree at that commit; repo defaults to its repository"`
 	Model  string   `json:"model,omitempty"`
 	Effort string   `json:"effort,omitempty"`
 	Checks []string `json:"checks,omitempty" jsonschema:"check commands for a write task; omitted means detect from the project (.baton/checks, go.mod, Cargo.toml, Makefile test); a read task refuses them"`

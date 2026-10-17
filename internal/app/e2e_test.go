@@ -75,7 +75,7 @@ printf '%s\n' "$PWD" "$@" "$prompt" >> "$ARGV_LOG"
 case "$prompt" in
   *HOLD*) echo "$$" > agent.pid; sleep 60 ;;
   *DELAY*) sleep 1 ;;
-  *BASE-READ*) pwd -P > "$READ_PWD" ;;
+  *BASE-READ*) { pwd -P; git rev-parse HEAD; cat result.txt; } > "$READ_PWD" ;;
   *BUILD*) mkdir -p cmd/tool; printf 'ELF\000' > cmd/tool/tool; printf '#!/bin/sh\n' > run.sh; chmod +x cmd/tool/tool run.sh ;;
   *NESTED-NOENV*) env -u BATON_DEPTH "$BATON_BIN" do child -repo "$SOURCE_REPO" > "$NESTED_OUT" 2>&1 || true ;;
   *NESTED*) "$BATON_BIN" do child -repo "$SOURCE_REPO" > "$NESTED_OUT" 2>&1 || true ;;
@@ -232,10 +232,19 @@ printf 'raw stderr\n' >&2
 	}
 	cli(&submitted, "ask", "BASE-READ", "-base", firstID, "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s")
-	realWT, _ := filepath.EvalSymlinks(firstWT)
-	if b, err := os.ReadFile(filepath.Join(dir, "read-pwd")); err != nil || strings.TrimSpace(string(b)) != realWT || task.Status != "succeeded" || task.BaseCommit != firstHead {
-		t.Fatalf("base read ran in %q (%v), want %s: %+v", b, err, realWT, task)
+	readID := submitted.ID
+	// A read with a base runs in its own detached worktree at the commit
+	// recorded at dispatch, not in the base's worktree.
+	wantResult, _ := workspace.Git(repo, "show", firstHead+":result.txt")
+	readAt := func(what string) {
+		t.Helper()
+		realWT, _ := filepath.EvalSymlinks(task.Worktree)
+		b, err := os.ReadFile(filepath.Join(dir, "read-pwd"))
+		if err != nil || task.Worktree == "" || strings.TrimSpace(string(b)) != realWT+"\n"+firstHead+"\n"+wantResult || task.Status != "succeeded" || task.BaseCommit != firstHead {
+			t.Fatalf("%s: read %q (%v), want %s at %s: %+v", what, b, err, realWT, firstHead, task)
+		}
 	}
+	readAt("base read")
 	if log, err := os.ReadFile(argvLog); err != nil || !bytes.Contains(log, []byte("接着任务 "+firstID)) || !bytes.Contains(log, []byte("git diff "+base)) {
 		t.Fatalf("base hint: %v", err)
 	}
@@ -254,6 +263,16 @@ printf 'raw stderr\n' >&2
 			t.Fatalf("read check ran in %s: %v", d, err)
 		}
 	}
+	// The base takes another turn; a later turn of the read still sees the
+	// commit it was asked about.
+	cli(&submitted, "reply", firstID, "-msg", "more", "-timeout", "20s")
+	cli(&task, "wait", firstID, "-timeout", "20s")
+	if head, err := workspace.Git(repo, "rev-parse", firstBranch); err != nil || head == firstHead {
+		t.Fatalf("base reply did not move its branch: %s %v %+v", head, err, task)
+	}
+	cli(&submitted, "reply", readID, "-msg", "BASE-READ again", "-timeout", "20s")
+	cli(&task, "wait", readID, "-timeout", "20s")
+	readAt("read after a base reply")
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "fail check", "-check", "false", "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
 	if task.Status != "failed" || task.Verify.Status != "fail" || task.Verify.Checks[0].ExitCode != 1 {
