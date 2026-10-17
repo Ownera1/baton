@@ -149,7 +149,7 @@ Pi 始终加 `-ne`，禁用用户扩展。Codex resume 没有 `-s`/`-C`，使用
 
 write 要求源仓库干净且已有 HEAD。worker 从记录的 HEAD 创建 `<task>/wt` 和 `baton/<id>` 分支；每轮 Agent 结束后，将改动提交到这条分支，生成相对初始 HEAD 的累计 `patch.diff`。未被忽略的新文件里，有可执行权限的二进制文件（如 `go build` 留在包目录的程序）不提交，移到 `<task>/artifacts/` 下同样的路径，并在 warnings 里写明；脚本等文本文件照常提交。自动提交关闭 Git hooks 和签名，避免后台交互和 hook 的额外动作；Git 作者身份沿用环境或仓库配置。然后逐条运行检查，记录对应 commit、退出码、耗时和日志。没有检查时为 `none`；资源监测不可用、内存超限、检查超时、锁等待超时或工具缺失时为 `unavailable`。检查失败或 unavailable 使任务为 `failed`。
 
-检查之后再次确认分支和工作区状态；检查造成未提交改动或改变 HEAD 时结果包含“检查修改了工作区”提示，patch 对应检查前的提交。续接使用原 session、worktree 和检查列表；脏 worktree 必须先由用户处理，正在执行或 stale 的任务不能续接。取消通过标记通知 worker，终止当前 Agent 或检查的进程组；Agent 被取消或超时前已产生的改动也会按轮提交，任务仍记录 canceled 或 failed。
+检查之后再次确认分支和工作区状态；检查造成未提交改动或改变 HEAD 时结果包含“检查修改了工作区”提示，patch 对应检查前的提交。检查改动了已跟踪文件、索引或 HEAD 时，通过的不是交付的 patch，验证记为 `unavailable`，任务为 `failed`；只新增未跟踪文件（如构建产物）不影响验证结果。续接使用原 session、worktree 和检查列表；脏 worktree 必须先由用户处理，正在执行或 stale 的任务不能续接。取消通过标记通知 worker，终止当前 Agent 或检查的进程组；Agent 被取消或超时前已产生的改动也会按轮提交，任务仍记录 canceled 或 failed。
 
 ```sh
 # MCP 配置示例（command 必须为已构建二进制的绝对路径）
