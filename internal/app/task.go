@@ -67,7 +67,7 @@ type RunRequest struct {
 	Base   string   `json:"base,omitempty" jsonschema:"a finished write task (id, unique prefix or suffix) to continue from: write branches from its latest commit and inherits its checks, read runs in its worktree; repo defaults to its repository"`
 	Model  string   `json:"model,omitempty"`
 	Effort string   `json:"effort,omitempty"`
-	Checks []string `json:"checks,omitempty" jsonschema:"check commands; omitted means detect from the project (.baton/checks, go.mod, Cargo.toml, Makefile test)"`
+	Checks []string `json:"checks,omitempty" jsonschema:"check commands for a write task; omitted means detect from the project (.baton/checks, go.mod, Cargo.toml, Makefile test); a read task refuses them"`
 	// NoChecks skips detection and any checks for a write task.
 	NoChecks bool   `json:"no_checks,omitempty"`
 	Timeout  string `json:"timeout,omitempty" jsonschema:"turn timeout, default 2h"`

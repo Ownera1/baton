@@ -242,6 +242,18 @@ printf 'raw stderr\n' >&2
 	if out, err := exec.Command(bin, "do", "x", "-base", submitted.ID).CombinedOutput(); err == nil || !strings.Contains(string(out), "read-only") {
 		t.Fatalf("read task as base: %s %v", out, err)
 	}
+	// A check runs outside the agent's read-only sandbox, so read refuses one.
+	for _, args := range [][]string{{"ask", "x", "-repo", repo}, {"ask", "x", "-base", firstID}} {
+		out, err := exec.Command(bin, append(args, "-check", "touch read-mode-created.txt")...).CombinedOutput()
+		if err == nil || !strings.Contains(string(out), "read tasks run no checks") {
+			t.Fatalf("read with checks: %s %v", out, err)
+		}
+	}
+	for _, d := range []string{repo, firstWT} {
+		if _, err := os.Stat(filepath.Join(d, "read-mode-created.txt")); !os.IsNotExist(err) {
+			t.Fatalf("read check ran in %s: %v", d, err)
+		}
+	}
 	cli(&submitted, "run", "-agent", "codex", "-repo", repo, "-task", "fail check", "-check", "false", "-timeout", "20s")
 	cli(&task, "wait", submitted.ID, "-timeout", "20s", "-json")
 	if task.Status != "failed" || task.Verify.Status != "fail" || task.Verify.Checks[0].ExitCode != 1 {

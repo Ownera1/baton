@@ -189,7 +189,7 @@ git merge baton/<a1 的 ID> baton/<b2 的 ID>                 → 主 Agent 用�
 
 安全边界：Baton 不 push、不切换用户分支、不传任何 bypass / skip-permissions / always-approve / danger-full-access 参数。子 Agent 不能再派活：worker 给 Agent 和检查设置 `BATON_DEPTH=1`，带着它的 `do`/`ask`/`run`/`reply`（含 MCP）直接报错；codex 启动 MCP 服务时不传父进程环境，所以还会沿父进程往上找 `baton _worker`（每级一次 `ps`），找到同样拒绝；仓库位于 `$BATON_HOME/tasks/` 下（任务 worktree）时也拒绝。worktree 隔离代码改动，Agent 仍沿用自身权限机制。**Pi write 没有沙箱**，结果中也会提示；检查通过 `/bin/sh -c` 在本机执行，没有沙箱，有网络，能读你的家目录；写任务的检查跑的是子 Agent 刚写的代码（例如它写的测试），等于你亲手运行了它。Agent 自身的沙箱拦不住这一步，所以别对不信任的仓库或任务开写模式检查（`-no-check` 或 MCP 的 `no_checks` 关掉）。RSS 每秒采样，默认 3072 MB 上限，CPU 并行提示为 2（`memory_mb`、`cpus` 可改）、nice 为 10；这些限制不能约束主动脱离进程组的程序。内存上限按每条检查计算，几个任务同时检查时总占用会叠加，机器吃紧就设 `max_parallel`；所有实例用同一 BATON_HOME 才能共享这个上限。
 
-已知限制：仅支持 macOS/Linux；PID 存活检查无法识别 PID 复用，意外死亡报告 stale；SIGKILL 无法执行 worker 的清理逻辑，可能遗留子进程。read 使用 Agent 的只读模式，允许源仓库已有改动；它不是独立的 OS 沙箱。任务、分支和 worktree 保留供审阅，用 [`baton clean`](#清理任务) 清理。未提供成本的 Agent 保持成本未知，不估算；result 的顶层回复/用量/成本属于最近一轮，历轮记录在 turns。适配器通过真实输出样本和假 Agent 验证，本项目测试不调用真实服务。
+已知限制：仅支持 macOS/Linux；PID 存活检查无法识别 PID 复用，意外死亡报告 stale；SIGKILL 无法执行 worker 的清理逻辑，可能遗留子进程。read 使用 Agent 的只读模式，允许源仓库已有改动；它不是独立的 OS 沙箱。检查命令在 Agent 沙箱之外执行，所以 read 任务不接受检查（CLI 的 `-check`、MCP 的 `checks`、只读角色都一样），派活时直接报错。任务、分支和 worktree 保留供审阅，用 [`baton clean`](#清理任务) 清理。未提供成本的 Agent 保持成本未知，不估算；result 的顶层回复/用量/成本属于最近一轮，历轮记录在 turns。适配器通过真实输出样本和假 Agent 验证，本项目测试不调用真实服务。
 
 发布：`scripts/release.sh v0.1.1` 先等 `main` 当前提交的 CI 通过，再跑测试、打 tag、推送，并更新 `Ownera1/homebrew-tap` 的 `Formula/baton.rb`（从源码构建）。
 

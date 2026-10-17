@@ -118,6 +118,11 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	if in.NoChecks {
 		in.Checks = nil
 	}
+	// A check is a shell command outside the agent's read-only sandbox, run
+	// where the read task runs: the source checkout or the base's worktree.
+	if in.Mode == "read" && len(in.Checks) > 0 {
+		return nil, fmt.Errorf("read tasks run no checks: a check could change the repository; drop -check / checks or use write mode")
+	}
 	var entropy [8]byte
 	if _, err := rand.Read(entropy[:]); err != nil {
 		return nil, err
