@@ -130,6 +130,11 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	if in.NoChecks {
 		in.Checks = nil
 	}
+	// A check is a shell command outside the agent's read-only sandbox, run
+	// where the read task runs: the source checkout or the base's worktree.
+	if in.Mode == "read" && len(in.Checks) > 0 {
+		return nil, fmt.Errorf("read tasks run no checks: a check could change the repository; drop -check / checks or use write mode")
+	}
 	var entropy [8]byte
 	if _, err := rand.Read(entropy[:]); err != nil {
 		return nil, err
@@ -153,6 +158,11 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	if base != nil {
 		t.BaseTask = base.ID
 		t.Group = cmp.Or(t.Group, base.Group)
+	}
+	if in.Mode == "read" && base != nil {
+		// The worker checks BaseCommit out here, detached: the base's own
+		// worktree changes when the base is replied to.
+		t.Worktree = filepath.Join(dir, "wt")
 	}
 	if in.Mode == "write" {
 		t.Worktree = filepath.Join(dir, "wt")

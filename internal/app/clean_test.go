@@ -56,6 +56,9 @@ func cleanFixture(t *testing.T) (*Service, string, func(string, ...string) strin
 				git(task.Worktree, "add", f)
 				git(task.Worktree, "commit", "-q", "-m", f)
 			}
+		} else if base != "" {
+			task.Worktree = filepath.Join(dir, "wt")
+			git(repo, "worktree", "add", "-q", "--detach", task.Worktree, info.Head)
 		}
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			t.Fatal(err)
@@ -80,6 +83,7 @@ func TestClean(t *testing.T) {
 	base := add(6, "write", "succeeded", "")
 	running := add(7, "read", "running", base)
 	dirty := add(8, "write", "canceled", "")
+	review := add(9, "read", "succeeded", ancestor)
 	if err := os.WriteFile(filepath.Join(s.Home, "tasks", dirty, "wt", "notes.txt"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -96,11 +100,11 @@ func TestClean(t *testing.T) {
 	for _, it := range plan.Tasks {
 		keep[it.ID] = it.Keep
 	}
-	if _, ok := keep[running]; ok || len(keep) != 7 || keep[unmerged] == "" || !strings.Contains(keep[base], ShortID(running)) {
+	if _, ok := keep[running]; ok || len(keep) != 8 || keep[unmerged] == "" || !strings.Contains(keep[base], ShortID(running)) {
 		t.Fatalf("plan:\n%s%+v", plan.Text(), keep)
 	}
 	s.Clean(plan)
-	if want := []string{ancestor, squashed, picked, read}; !slices.Equal(sorted(plan.Removed), want) {
+	if want := []string{ancestor, squashed, picked, read, review}; !slices.Equal(sorted(plan.Removed), want) {
 		t.Fatalf("removed %v, want %v\n%+v", plan.Removed, want, plan.Tasks)
 	}
 	for _, id := range plan.Removed {
@@ -109,6 +113,9 @@ func TestClean(t *testing.T) {
 		}
 	}
 	branches := git(repo, "branch", "--format=%(refname:short)")
+	if strings.Contains(git(repo, "worktree", "list"), review) {
+		t.Error("a removed read task's worktree is still registered")
+	}
 	if strings.Contains(branches, ancestor) || !strings.Contains(branches, unmerged) || !strings.Contains(branches, dirty) {
 		t.Errorf("branches:\n%s", branches)
 	}
