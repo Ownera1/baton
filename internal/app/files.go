@@ -83,13 +83,17 @@ func writeJSON(path string, value any) error {
 }
 
 func lock(dir string, nonblocking bool) (*os.File, error) {
-	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, err
-	}
 	flags := syscall.LOCK_EX
 	if nonblocking {
 		flags |= syscall.LOCK_NB
+	}
+	return flock(dir, flags)
+}
+
+func flock(dir string, flags int) (*os.File, error) {
+	f, err := os.OpenFile(filepath.Join(dir, "lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
 	}
 	if err := syscall.Flock(int(f.Fd()), flags); err != nil {
 		f.Close()

@@ -10,7 +10,10 @@ import (
 	"testing"
 )
 
-func TestClean(t *testing.T) {
+// cleanFixture is a repository with one commit and a Service whose add
+// records a finished task; a write task gets a worktree with one commit per
+// file.
+func cleanFixture(t *testing.T) (*Service, string, func(string, ...string) string, func(int, string, string, string, ...string) string) {
 	for k, v := range map[string]string{"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
 		"GIT_CONFIG_GLOBAL": os.DevNull, "GIT_CONFIG_NOSYSTEM": "1"} {
 		t.Setenv(k, v)
@@ -32,11 +35,9 @@ func TestClean(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := &Service{Home: t.TempDir()}
-	// add records a finished task; a write task gets a worktree with one
-	// commit per file.
 	add := func(n int, mode, status, base string, files ...string) string {
 		t.Helper()
-		id := fmt.Sprintf("20261013-00000%d-00000000aaaa000%d", n, n)
+		id := fmt.Sprintf("20261013-0000%02d-00000000aaaa00%02d", n, n)
 		dir := filepath.Join(s.Home, "tasks", id)
 		task := Task{ID: id, Title: "task " + fmt.Sprint(n), Agent: "codex", Mode: mode, Repo: repo, Status: status, BaseTask: base,
 			Turns: []Turn{{Number: 1, Prompt: "p"}}}
@@ -66,6 +67,11 @@ func TestClean(t *testing.T) {
 		}
 		return id
 	}
+	return s, repo, git, add
+}
+
+func TestClean(t *testing.T) {
+	s, repo, git, add := cleanFixture(t)
 	ancestor := add(1, "write", "succeeded", "", "a.txt")
 	squashed := add(2, "write", "succeeded", "", "c1.txt", "c2.txt")
 	picked := add(3, "write", "failed", "", "p.txt")
@@ -156,5 +162,78 @@ func TestUnreadableTask(t *testing.T) {
 	s.Clean(plan)
 	if _, err := os.Stat(dir); !os.IsNotExist(err) || len(plan.Removed) != 1 {
 		t.Fatalf("forced clean must remove it: %+v %v", plan, err)
+	}
+}
+
+// TestCleanApproved removes a task only as it was listed: one that gained a
+// commit, a turn or a task continuing from it after the plan stays, and a
+// base stays while a task continuing from it stays.
+func TestCleanApproved(t *testing.T) {
+	s, _, git, add := cleanFixture(t)
+	wt := func(id string) string { return filepath.Join(s.Home, "tasks", id, "wt") }
+	commit := func(id, file string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(wt(id), file), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		git(wt(id), "add", file)
+		git(wt(id), "commit", "-q", "-m", file)
+	}
+	committed := add(1, "write", "succeeded", "")
+	turned := add(2, "read", "succeeded", "")
+	continued := add(3, "write", "succeeded", "")
+	a := add(4, "write", "succeeded", "")
+	b := add(5, "write", "succeeded", a)
+	c := add(6, "write", "succeeded", b)
+	d := add(7, "write", "succeeded", "")
+	e := add(8, "write", "succeeded", d)
+	plan, err := s.PlanClean(CleanRequest{IDs: []string{committed, turned, continued, a, b, c, d, e}})
+	if err != nil || plan.Removable() != 8 {
+		t.Fatalf("plan: %v\n%s", err, plan.Text())
+	}
+	// While the person reads the plan: a new commit, a new turn, a new task
+	// continuing from one, and a worktree git will not remove.
+	commit(committed, "new.txt")
+	path := filepath.Join(s.Home, "tasks", turned, "task.json")
+	var task Task
+	if err := readJSON(path, &task); err != nil {
+		t.Fatal(err)
+	}
+	task.Turns = append(task.Turns, Turn{Number: 2, Prompt: "again"})
+	if err := writeJSON(path, task); err != nil {
+		t.Fatal(err)
+	}
+	add(9, "read", "succeeded", continued)
+	if err := os.WriteFile(filepath.Join(wt(c), "notes.txt"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s.Clean(plan)
+	if want := sorted([]string{d, e}); !slices.Equal(sorted(plan.Removed), want) {
+		t.Fatalf("removed %v, want %v\n%+v", plan.Removed, want, plan.Tasks)
+	}
+	errs := map[string]string{}
+	for _, it := range plan.Tasks {
+		errs[it.ID] = it.Error
+	}
+	for id, want := range map[string]string{committed: "新提交", turned: "新的一轮", continued: "base", b: ShortID(c), a: ShortID(b)} {
+		if !strings.Contains(errs[id], want) {
+			t.Errorf("%s: error %q, want %q", ShortID(id), errs[id], want)
+		}
+	}
+	for _, id := range []string{committed, a, b, c} {
+		if _, err := os.Stat(wt(id)); err != nil {
+			t.Errorf("%s lost its worktree: %v", ShortID(id), err)
+		}
+	}
+
+	// force removes an unmerged branch as listed, not a commit made since.
+	forced := add(10, "write", "failed", "", "f.txt")
+	if plan, err = s.PlanClean(CleanRequest{IDs: []string{forced}, Force: true}); err != nil || plan.Removable() != 1 {
+		t.Fatalf("force plan: %v\n%s", err, plan.Text())
+	}
+	commit(forced, "g.txt")
+	if s.Clean(plan); len(plan.Removed) != 0 || !strings.Contains(plan.Tasks[0].Error, "新提交") {
+		t.Fatalf("forced clean removed new work: %+v", plan)
 	}
 }

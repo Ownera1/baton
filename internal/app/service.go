@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -24,6 +25,17 @@ func (s *Service) Run(in RunRequest) (*Submitted, error) {
 	var base *Task
 	if in.Base != "" {
 		if base, err = s.baseTask(in.Base); err != nil {
+			return nil, err
+		}
+		// Held until the new task is recorded, so clean cannot remove the base
+		// in between; shared, so several tasks can start from one base at once.
+		dir, _ := s.dir(base.ID)
+		f, err := flock(dir, syscall.LOCK_SH|syscall.LOCK_NB)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		if base, err = s.baseTask(base.ID); err != nil {
 			return nil, err
 		}
 		in.Repo = cmp.Or(in.Repo, base.Repo)
