@@ -215,8 +215,15 @@ func register(srv *mcp.Server, svc *app.Service) {
 			// The user, not the main agent, answers this through the client:
 			// newer clients retry the call with the answer, and for older ones
 			// the SDK asks and calls again itself. The state is the list shown,
-			// so a list that changed meanwhile is asked about again.
-			state := strings.Join(plan.RemovableIDs(), ",")
+			// each task's turns and branch commit included, so a list or task
+			// that changed meanwhile is asked about again.
+			var items []string
+			for _, it := range plan.Tasks {
+				if it.Keep == "" {
+					items = append(items, fmt.Sprintf("%s#%d@%s", it.ID, it.Turns, it.Head))
+				}
+			}
+			state := strings.Join(items, ",")
 			answer, ok := req.Params.InputResponses["approve"].(*mcp.ElicitResult)
 			if !ok || req.Params.RequestState != state {
 				return &mcp.CallToolResult{RequestState: state, InputRequests: mcp.InputRequestMap{
