@@ -2,6 +2,7 @@ package app
 
 import (
 	"baton/internal/workspace"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -29,11 +30,15 @@ type CleanItem struct {
 	Bytes  int64  `json:"bytes"`
 	Keep   string `json:"keep,omitempty"`
 	Error  string `json:"error,omitempty"` // why removing it failed
+	// The task as listed: Clean removes it only if it is still the same.
+	Head  string `json:"head,omitempty"` // branch commit of a write task
+	Turns int    `json:"turns"`
 }
 
 type CleanPlan struct {
 	Tasks   []CleanItem `json:"tasks"`
 	Removed []string    `json:"removed"`
+	Force   bool        `json:"force,omitempty"`
 }
 
 func active(status string) bool {
@@ -62,14 +67,14 @@ func (s *Service) PlanClean(req CleanRequest) (*CleanPlan, error) {
 			return nil, err
 		}
 	}
-	plan := &CleanPlan{Tasks: []CleanItem{}, Removed: []string{}}
+	plan := &CleanPlan{Tasks: []CleanItem{}, Removed: []string{}, Force: req.Force}
 	index := map[string]int{}
 	for _, t := range list.Tasks {
 		if len(picked) > 0 && !picked[t.ID] || len(picked) == 0 && (root != "" && t.Repo != root || active(t.Status)) {
 			continue
 		}
 		it := CleanItem{ID: t.ID, Title: t.Name(), Repo: t.Repo, Mode: t.Mode, Status: t.Status, Branch: t.Branch,
-			Bytes: dirSize(filepath.Join(s.Home, "tasks", t.ID))}
+			Bytes: dirSize(filepath.Join(s.Home, "tasks", t.ID)), Turns: len(t.Turns)}
 		switch _, err := os.Stat(t.Repo); {
 		case active(t.Status):
 			it.Keep = "还没结束，先等它结束或 baton cancel"
@@ -83,6 +88,7 @@ func (s *Service) PlanClean(req CleanRequest) (*CleanPlan, error) {
 				it.Keep = "仓库已不存在，force 才删除"
 			}
 		default:
+			it.Head = branchHead(t)
 			if it.Merged = merged(t); !it.Merged && !req.Force {
 				it.Keep = "分支未合并到仓库当前分支，force 才删除"
 			}
@@ -90,8 +96,9 @@ func (s *Service) PlanClean(req CleanRequest) (*CleanPlan, error) {
 		index[t.ID] = len(plan.Tasks)
 		plan.Tasks = append(plan.Tasks, it)
 	}
-	// A task that stays still needs its base: a read task runs in the base's
-	// worktree, a write task looks the base up every turn.
+	// A task that stays still needs its base: its worker looks the base up
+	// every turn, and a read task recorded before reads got their own
+	// worktree runs in the base's.
 	for changed := true; changed; {
 		changed = false
 		for _, t := range list.Tasks {
@@ -134,48 +141,99 @@ func merged(t *Task) bool {
 	return err == nil && inHead(t.Repo, squash)
 }
 
+// branchHead is the commit of the task's branch, empty when it has none.
+func branchHead(t *Task) string {
+	head, err := workspace.Git(t.Repo, "rev-parse", "--verify", "-q", "refs/heads/"+t.Branch)
+	if err != nil {
+		return ""
+	}
+	return head
+}
+
 // inHead reports whether git cherry finds every commit of rev in HEAD.
 func inHead(repo, rev string) bool {
 	out, err := workspace.Git(repo, "cherry", "HEAD", rev)
 	return err == nil && !strings.Contains("\n"+out, "\n+")
 }
 
+// errBase marks a task that a task still on disk continues from.
+var errBase = errors.New("另一个任务以它为 base")
+
 // Clean removes the plan's tasks that have no reason to stay. A task that
 // fails, such as a worktree git will not remove because of changes, records
-// the error in the plan and the rest go on.
+// the error in the plan and the rest go on. A base waits for the tasks that
+// continue from it and stays when one of them stays.
 func (s *Service) Clean(plan *CleanPlan) {
-	for i := range plan.Tasks {
-		it := &plan.Tasks[i]
-		if it.Keep != "" {
-			continue
+	var pending []int
+	for i, it := range plan.Tasks {
+		if it.Keep == "" {
+			pending = append(pending, i)
 		}
-		if err := s.remove(it.ID); err != nil {
-			it.Error = err.Error()
-			continue
+	}
+	for len(pending) > 0 {
+		var later []int
+		for _, i := range pending {
+			it := &plan.Tasks[i]
+			err := s.remove(it, plan.Force)
+			if it.Error = ""; err != nil {
+				it.Error = err.Error()
+				if errors.Is(err, errBase) {
+					later = append(later, i)
+				}
+				continue
+			}
+			plan.Removed = append(plan.Removed, it.ID)
 		}
-		plan.Removed = append(plan.Removed, it.ID)
+		if len(later) == len(pending) {
+			return
+		}
+		pending = later
 	}
 }
 
-func (s *Service) remove(id string) error {
-	// Reply holds this lock while it queues a turn, so a task is never removed
-	// between its check that the task is finished and the new turn.
-	f, err := lock(filepath.Join(s.Home, "tasks", id), true)
+// remove deletes one planned task, checking under its lock that it is still
+// the task the person approved: finished, with the same turns and branch
+// commit, merged unless forced, and no task left that continues from it.
+func (s *Service) remove(it *CleanItem, force bool) error {
+	// Reply holds this lock while it queues a turn, and Run while it records a
+	// task continuing from this one, so neither lands between these checks
+	// and the removal.
+	f, err := lock(filepath.Join(s.Home, "tasks", it.ID), true)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
-	t, err := s.Status(id)
+	t, err := s.Status(it.ID)
 	if err != nil {
 		// Only an unreadable task gets here, forced; its worktree lives in its directory.
-		return os.RemoveAll(filepath.Join(s.Home, "tasks", id))
+		return os.RemoveAll(filepath.Join(s.Home, "tasks", it.ID))
 	}
 	if active(t.Status) {
 		return fmt.Errorf("task is %s again", t.Status)
 	}
-	if _, err := os.Stat(t.Repo); t.Mode == "write" && err == nil {
-		if t.Branch != "baton/"+t.ID {
-			return fmt.Errorf("refusing to delete branch %q of task %s", t.Branch, t.ID)
+	if len(t.Turns) != it.Turns {
+		return fmt.Errorf("列出后又跑了新的一轮，没有删除；重新运行 clean 确认")
+	}
+	list, err := s.List("")
+	if err != nil {
+		return err
+	}
+	for _, o := range list.Tasks {
+		if o.BaseTask == t.ID {
+			return fmt.Errorf("%w：任务 %s", errBase, ShortID(o.ID))
+		}
+	}
+	if _, err := os.Stat(t.Repo); t.Worktree != "" && err == nil {
+		if t.Mode == "write" {
+			if t.Branch != "baton/"+t.ID {
+				return fmt.Errorf("refusing to delete branch %q of task %s", t.Branch, t.ID)
+			}
+			if branchHead(t) != it.Head {
+				return fmt.Errorf("分支 %s 在列出后有新提交，没有删除；重新运行 clean 确认", t.Branch)
+			}
+			if !force && !merged(t) {
+				return fmt.Errorf("分支 %s 未合并到仓库当前分支，没有删除", t.Branch)
+			}
 		}
 		if _, err := os.Stat(t.Worktree); err == nil {
 			// Without --force git refuses a worktree with changes or untracked files.
@@ -185,9 +243,11 @@ func (s *Service) remove(id string) error {
 		} else if _, err := workspace.Git(t.Repo, "worktree", "prune"); err != nil {
 			return err
 		}
-		if _, err := workspace.Git(t.Repo, "rev-parse", "--verify", "-q", "refs/heads/"+t.Branch); err == nil {
-			if _, err := workspace.Git(t.Repo, "branch", "-D", t.Branch); err != nil {
-				return err
+		if t.Mode == "write" { // a read task's worktree is detached, with no branch
+			if _, err := workspace.Git(t.Repo, "rev-parse", "--verify", "-q", "refs/heads/"+t.Branch); err == nil {
+				if _, err := workspace.Git(t.Repo, "branch", "-D", t.Branch); err != nil {
+					return err
+				}
 			}
 		}
 	}

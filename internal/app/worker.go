@@ -127,10 +127,20 @@ func (s *Service) Worker(id string) (retErr error) {
 		if err != nil {
 			return err
 		}
-		if t.Mode == "read" {
-			runDir = bt.Worktree
+		if t.Mode == "read" && t.Worktree == "" {
+			runDir = bt.Worktree // a read task recorded before reads got their own worktree
 		}
 		hint = fmt.Sprintf("这里接着任务 %s（分支 %s）的结果，它的改动可用 git diff %s 查看。\n\n", bt.ID, bt.Branch, bt.BaseCommit)
+	}
+	if t.Mode == "read" && t.Worktree != "" {
+		// The commit recorded at dispatch, detached, so the read sees what it
+		// was asked about even if the base takes another turn meanwhile.
+		runDir = t.Worktree
+		if req.Number == 1 {
+			if _, err := workspace.Git(t.Repo, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", t.Worktree, t.BaseCommit); err != nil {
+				return err
+			}
+		}
 	}
 	if t.Mode == "write" {
 		runDir = t.Worktree
@@ -249,6 +259,21 @@ func (s *Service) Worker(id string) (retErr error) {
 		}
 		if info.Head != snapshot {
 			t.Warnings = append(t.Warnings, fmt.Sprintf("turn %d: 检查修改了工作区：HEAD 从 %s 变为 %s；patch 对应检查前的提交。", req.Number, snapshot, info.Head))
+		}
+		// A pass speaks for the patch only when the checks left its commit,
+		// tracked files and index as they found them; new untracked files,
+		// such as build output, do not change the patch.
+		changed := info.Head != snapshot
+		if !changed && info.Dirty && t.Verify.Status == verify.StatusPass {
+			tracked, err := workspace.Git(runDir, "status", "--porcelain", "--untracked-files=no")
+			if err != nil {
+				return err
+			}
+			changed = tracked != ""
+		}
+		if changed && t.Verify.Status == verify.StatusPass {
+			t.Verify.Status = verify.StatusUnavailable
+			t.Verify.Notes += "; 检查改动了已跟踪文件、索引或 HEAD，通过的不是交付的 patch"
 		}
 	}
 	return ctx.Err()

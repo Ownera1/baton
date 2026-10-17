@@ -68,7 +68,7 @@ baton                                     # 打开面板（同 baton tui）
 
 ### 接力
 
-`-base <任务>`（MCP 的 `base`）让新任务接着一个已结束的写任务：写任务从它的 `baton/<id>` 分支最新提交建新 worktree 和分支，`patch.diff` 只含自己这一段，检查沿用它的检查列表，源仓库有未提交改动也可以；只读任务在它的 worktree 里运行，适合评审。第 1 轮提示里会告诉子 Agent 用 `git diff <它的起点>` 查看前一个任务的改动。`repo` 默认取它的仓库，写了别的仓库会报错；只读任务或仍在运行的任务不能作为 base。Baton 不做合并，子 Agent 也合并不了：沙箱不允许写 worktree 的 git 元数据（实测 codex 的 `git merge` 失败）。整合并行任务时，由主 Agent 先审核各分支，再自己合并通过审核的 `baton/<id>`。
+`-base <任务>`（MCP 的 `base`）让新任务接着一个已结束的写任务：写任务从它的 `baton/<id>` 分支最新提交建新 worktree 和分支，`patch.diff` 只含自己这一段，检查沿用它的检查列表，源仓库有未提交改动也可以；只读任务在自己的 detached worktree 里运行，检出派活时记录的它的分支提交（任务的 `base_commit`），之后 base 再续接也不改变评审看到的版本，适合评审；这个 worktree 随 `baton clean` 一起删除。第 1 轮提示里会告诉子 Agent 用 `git diff <它的起点>` 查看前一个任务的改动。`repo` 默认取它的仓库，写了别的仓库会报错；只读任务或仍在运行的任务不能作为 base。Baton 不做合并，子 Agent 也合并不了：沙箱不允许写 worktree 的 git 元数据（实测 codex 的 `git merge` 失败）。整合并行任务时，由主 Agent 先审核各分支，再自己合并通过审核的 `baton/<id>`。
 
 `-group <名字>`（MCP 的 `group`）给一起完成同一目标的任务打标签，以 base 派出的任务不写时沿用 base 的组；`baton list -group 名字`、MCP `baton_list` 的 `group` 只列这一组，列表和面板里显示为 `#名字`。
 
@@ -149,7 +149,7 @@ Pi 始终加 `-ne`，禁用用户扩展。Codex resume 没有 `-s`/`-C`，使用
 
 write 要求源仓库干净且已有 HEAD。worker 从记录的 HEAD 创建 `<task>/wt` 和 `baton/<id>` 分支；每轮 Agent 结束后，将改动提交到这条分支，生成相对初始 HEAD 的累计 `patch.diff`。未被忽略的新文件里，有可执行权限的二进制文件（如 `go build` 留在包目录的程序）不提交，移到 `<task>/artifacts/` 下同样的路径，并在 warnings 里写明；脚本等文本文件照常提交。自动提交关闭 Git hooks 和签名，避免后台交互和 hook 的额外动作；Git 作者身份沿用环境或仓库配置。然后逐条运行检查，记录对应 commit、退出码、耗时和日志。没有检查时为 `none`；资源监测不可用、内存超限、检查超时、锁等待超时或工具缺失时为 `unavailable`。检查失败或 unavailable 使任务为 `failed`。
 
-检查之后再次确认分支和工作区状态；检查造成未提交改动或改变 HEAD 时结果包含“检查修改了工作区”提示，patch 对应检查前的提交。续接使用原 session、worktree 和检查列表；脏 worktree 必须先由用户处理，正在执行或 stale 的任务不能续接。取消通过标记通知 worker，终止当前 Agent 或检查的进程组；Agent 被取消或超时前已产生的改动也会按轮提交，任务仍记录 canceled 或 failed。
+检查之后再次确认分支和工作区状态；检查造成未提交改动或改变 HEAD 时结果包含“检查修改了工作区”提示，patch 对应检查前的提交。检查改动了已跟踪文件、索引或 HEAD 时，通过的不是交付的 patch，验证记为 `unavailable`，任务为 `failed`；只新增未跟踪文件（如构建产物）不影响验证结果。续接使用原 session、worktree 和检查列表；脏 worktree 必须先由用户处理，正在执行或 stale 的任务不能续接。取消通过标记通知 worker，终止当前 Agent 或检查的进程组；Agent 被取消或超时前已产生的改动也会按轮提交，任务仍记录 canceled 或 failed。
 
 ```sh
 # MCP 配置示例（command 必须为已构建二进制的绝对路径）
@@ -189,7 +189,7 @@ git merge baton/<a1 的 ID> baton/<b2 的 ID>                 → 主 Agent 用�
 
 安全边界：Baton 不 push、不切换用户分支、不传任何 bypass / skip-permissions / always-approve / danger-full-access 参数。子 Agent 不能再派活：worker 给 Agent 和检查设置 `BATON_DEPTH=1`，带着它的 `do`/`ask`/`run`/`reply`（含 MCP）直接报错；codex 启动 MCP 服务时不传父进程环境，所以还会沿父进程往上找 `baton _worker`（每级一次 `ps`），找到同样拒绝；仓库位于 `$BATON_HOME/tasks/` 下（任务 worktree）时也拒绝。worktree 隔离代码改动，Agent 仍沿用自身权限机制。**Pi write 没有沙箱**，结果中也会提示；检查通过 `/bin/sh -c` 在本机执行，没有沙箱，有网络，能读你的家目录；写任务的检查跑的是子 Agent 刚写的代码（例如它写的测试），等于你亲手运行了它。Agent 自身的沙箱拦不住这一步，所以别对不信任的仓库或任务开写模式检查（`-no-check` 或 MCP 的 `no_checks` 关掉）。RSS 每秒采样，默认 3072 MB 上限，CPU 并行提示为 2（`memory_mb`、`cpus` 可改）、nice 为 10；这些限制不能约束主动脱离进程组的程序。内存上限按每条检查计算，几个任务同时检查时总占用会叠加，机器吃紧就设 `max_parallel`；所有实例用同一 BATON_HOME 才能共享这个上限。
 
-已知限制：仅支持 macOS/Linux；PID 存活检查无法识别 PID 复用，意外死亡报告 stale；SIGKILL 无法执行 worker 的清理逻辑，可能遗留子进程。read 使用 Agent 的只读模式，允许源仓库已有改动；它不是独立的 OS 沙箱。任务、分支和 worktree 保留供审阅，用 [`baton clean`](#清理任务) 清理。未提供成本的 Agent 保持成本未知，不估算；result 的顶层回复/用量/成本属于最近一轮，历轮记录在 turns。适配器通过真实输出样本和假 Agent 验证，本项目测试不调用真实服务。
+已知限制：仅支持 macOS/Linux；PID 存活检查无法识别 PID 复用，意外死亡报告 stale；SIGKILL 无法执行 worker 的清理逻辑，可能遗留子进程。read 使用 Agent 的只读模式，允许源仓库已有改动；它不是独立的 OS 沙箱。检查命令在 Agent 沙箱之外执行，所以 read 任务不接受检查（CLI 的 `-check`、MCP 的 `checks`、只读角色都一样），派活时直接报错。任务、分支和 worktree 保留供审阅，用 [`baton clean`](#清理任务) 清理。未提供成本的 Agent 保持成本未知，不估算；result 的顶层回复/用量/成本属于最近一轮，历轮记录在 turns。适配器通过真实输出样本和假 Agent 验证，本项目测试不调用真实服务。
 
 发布：`scripts/release.sh v0.1.1` 先等 `main` 当前提交的 CI 通过，再跑测试、打 tag、推送，并更新 `Ownera1/homebrew-tap` 的 `Formula/baton.rb`（从源码构建）。
 
